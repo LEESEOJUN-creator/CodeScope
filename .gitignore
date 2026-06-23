@@ -1,0 +1,19 @@
+# 환경변수 (절대 커밋 금지)
+.env
+*.pem
+application-secret.yml
+
+# QueryDSL 생성 파일
+build/generated/
+
+# IntelliJ
+.idea/
+*.iml
+
+# Gradle
+.gradle/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
