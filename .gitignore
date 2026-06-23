@@ -17,3 +17,7 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code 보안 로그
+.claude/hooks/security.log
+.claude/hooks/debug.log
