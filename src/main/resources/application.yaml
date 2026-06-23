@@ -1,3 +1,141 @@
 spring:
   application:
     name: codescope
+
+  # ──────────────────────────────────────
+  # PostgreSQL 설정
+  # 왜: GithubRepo, Topic, Issue 등 모든 도메인 데이터를 저장하는 메인 DB
+  # 왜 PostgreSQL인가: pgvector 확장을 지원하는 DB 중 가장 널리 쓰임
+  #                    벡터 유사도 검색을 별도 DB 없이 PostgreSQL 하나로 해결
+  # Day 6~7에서 kind PostgreSQL Pod에 연결할 때 host/port 변경 예정
+  # ──────────────────────────────────────
+  datasource:
+    url: jdbc:postgresql://localhost:5432/codescope
+    username: codescope
+    password: codescope
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      # create-drop: 앱 시작 시 테이블 생성, 종료 시 삭제
+      # 왜 개발 단계에서 create-drop 쓰는가:
+      #   엔티티를 수정할 때마다 테이블을 자동으로 다시 만들어줌
+      #   → 스키마 변경이 잦은 개발 초기에 편함
+      # 주의: 운영 환경에서는 절대 쓰면 안 됨 → 데이터 전부 날아감
+      #       배포 시 validate 또는 none으로 변경
+      ddl-auto: create-drop
+    show-sql: true      # SQL 로그 출력 (왜: N+1 문제 직접 눈으로 확인하기 위함)
+    properties:
+      hibernate:
+        format_sql: true  # SQL을 보기 좋게 포맷 (왜: 쿼리 분석할 때 가독성)
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+
+  # ──────────────────────────────────────
+  # Redis 설정
+  # 왜: 두 가지 목적
+  #   1. 실시간 트렌드 랭킹 (Sorted Set - ZINCRBY/ZRANGE)
+  #      → DB에서 매번 ORDER BY stars 쿼리 실행 시 데이터가 쌓일수록 느려짐
+  #      → Redis는 인메모리라 수 ms 응답
+  #   2. 중복 수집 방지 (setIfAbsent)
+  #      → 같은 레포를 두 번 처리하면 안 됨
+  #      → DB 조회로 중복 확인하면 race condition 발생 가능
+  #      → setIfAbsent는 atomic 연산으로 중복 방지 보장
+  #      Redis 학습 후 실제로 사용
+  # ──────────────────────────────────────
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+  # ──────────────────────────────────────
+  # Kafka 설정
+  # 왜: GitHub README 임베딩 생성이 레포 1개당 약 3초 걸림
+  #     레포 200개를 동기로 처리하면 10분 → 스케줄러 다음 사이클과 겹침
+  #     Kafka로 수집 이벤트를 발행하면 즉시 응답하고
+  #     Consumer가 백그라운드에서 임베딩 처리
+  # 왜 @Async 대신 Kafka인가:
+  #     @Async: JVM 스레드풀 → 앱 재시작 시 처리 중 작업 유실
+  #     Kafka: 브로커에 메시지 영속 저장 → 재시작해도 이어서 처리 가능
+  #     Kafka 학습 후 실제로 사용
+  # ──────────────────────────────────────
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: codescope-group
+      auto-offset-reset: earliest
+      # 왜 enable-auto-commit: false인가:
+      #   true면 메시지 받는 순간 커밋 → 처리 실패해도 커밋됨 → 메시지 유실
+      #   false면 처리 완료 후 수동 커밋 → 실패 시 재처리 가능
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+  # ──────────────────────────────────────
+  # 임시 AutoConfigure 제외
+  # 왜: 지금 PostgreSQL, Redis, Kafka가 로컬에 없음
+  #     없는 상태에서 실행하면 연결 실패로 앱이 뜨지 않음
+  #     각 기술을 kind에 띄우는 날에 해당 줄 제거
+  #   - DataSource 줄 제거 (PostgreSQL 연결)
+  #   -  Redis 줄 제거 (Redis 연결)
+  #   - Kafka 줄 제거 (Kafka 연결)
+  # ──────────────────────────────────────
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration        # Day 6 PostgreSQL 연결 후 제거
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration      # Day 11 Redis 연결 후 제거
+      - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration           # Day 15 Kafka 연결 후 제거
+
+# ──────────────────────────────────────
+# Swagger UI 설정
+# 왜: REST API를 브라우저에서 바로 테스트 가능
+#     코드 기반으로 API 문서 자동 생성 → 포트폴리오 README에 URL 링크 가능
+#     Postman 없이 localhost:8080/swagger-ui.html 하나로 전체 API 확인
+# ──────────────────────────────────────
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /api-docs
+
+# ──────────────────────────────────────
+# Actuator 설정
+# 왜: K8s에서 Pod 헬스체크에 사용
+#     /actuator/health 엔드포인트로 Pod가 정상인지 확인
+#     ArgoCD, K8s Liveness/Readiness Probe가 이 엔드포인트를 호출함
+# ──────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info
+
+# ──────────────────────────────────────
+# GitHub API 설정
+# 왜: CodeScope의 핵심 데이터 소스
+#     토큰 없이 호출하면 Rate Limit 60회/시간
+#     토큰 있으면 5000회/시간
+# 왜 ${GITHUB_TOKEN} 형식인가:
+#     실제 토큰 값을 yml에 직접 쓰면 Git에 올라가서 보안 사고 발생
+#     환경변수 참조 방식으로 값을 주입받음
+#     로컬: .env 파일 / 배포: K8s Secret
+# ──────────────────────────────────────
+github:
+  token: ${GITHUB_TOKEN:your-token-here}
+  api:
+    base-url: https://api.github.com
+
+# ──────────────────────────────────────
+# LLM 설정
+# 왜 Ollama와 OpenAI 둘 다 설정하는가:
+#     개발 중: Ollama (로컬, 무료) → API 비용 없음
+#     배포 시: OpenAI로 전환 → 더 좋은 품질
+#     LlmClient 인터페이스로 구현체 분리 → 코드 변경 없이 전환 가능
+# ──────────────────────────────────────
+llm:
+  ollama:
+    base-url: http://localhost:11434
+  openai:
+    api-key: ${OPENAI_API_KEY:}

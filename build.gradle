@@ -13,28 +13,78 @@ java {
 	}
 }
 
+configurations {
+	compileOnly {
+		extendsFrom annotationProcessor
+	}
+}
+
 repositories {
 	mavenCentral()
 }
 
 dependencies {
-	implementation 'org.springframework.boot:spring-boot-starter-actuator'
-	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
-	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	// Spring Web
 	implementation 'org.springframework.boot:spring-boot-starter-web'
-	implementation 'org.springframework.boot:spring-boot-starter-webflux'
+
+	// Spring Data JPA
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+
+	// Spring Data Redis
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+
+	// Spring Kafka
 	implementation 'org.springframework.kafka:spring-kafka'
-	compileOnly 'org.projectlombok:lombok'
-	developmentOnly 'org.springframework.boot:spring-boot-devtools'
+
+	// Spring Validation
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+	// Spring Actuator
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+	// WebFlux (WebClient - GitHub API, Ollama, OpenAI 호출용)
+	implementation 'org.springframework.boot:spring-boot-starter-webflux'
+
+	// PostgreSQL
 	runtimeOnly 'org.postgresql:postgresql'
+
+	// Lombok
+	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'
+
+	// DevTools
+	developmentOnly 'org.springframework.boot:spring-boot-devtools'
+
+	// Swagger
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0'
+
+	// QueryDSL (동적 검색 - Day 9에서 사용)
+	implementation 'com.querydsl:querydsl-jpa:5.0.0:jakarta'
+	annotationProcessor 'com.querydsl:querydsl-apt:5.0.0:jakarta'
+	annotationProcessor 'jakarta.annotation:jakarta.annotation-api'
+	annotationProcessor 'jakarta.persistence:jakarta.persistence-api'
+
+	// pgvector (벡터 유사도 검색 - Day 22에서 사용)
+	implementation 'com.pgvector:pgvector:0.1.6'
+
+	// Test
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
-	testImplementation 'io.projectreactor:reactor-test'
 	testImplementation 'org.springframework.kafka:spring-kafka-test'
+	testImplementation 'io.projectreactor:reactor-test'
 	testCompileOnly 'org.projectlombok:lombok'
-	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	testAnnotationProcessor 'org.projectlombok:lombok'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// QueryDSL Q클래스 생성 경로
+def querydslDir = "$buildDir/generated/querydsl"
+
+sourceSets {
+	main.java.srcDirs += [querydslDir]
+}
+
+tasks.withType(JavaCompile) {
+	options.annotationProcessorGeneratedSourcesDirectory = file(querydslDir)
 }
 
 tasks.named('test') {
