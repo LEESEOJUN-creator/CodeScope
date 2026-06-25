@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: codescope-postgres
+    environment:
+      POSTGRES_DB: codescope
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data  # 컨테이너 재시작해도 데이터 유지
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    container_name: codescope-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes  # 데이터 영속성 활성화
+    profiles:
+      - redis  # docker compose --profile redis up 할 때만 실행
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: codescope-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    profiles:
+      - kafka
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: codescope-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    profiles:
+      - kafka
+
+volumes:
+  postgres-data:
+  redis-data:
