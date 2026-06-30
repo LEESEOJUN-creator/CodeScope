@@ -9,6 +9,7 @@ import lombok.NoArgsConstructor;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Getter
 @Entity
@@ -18,6 +19,7 @@ public class GithubRepository extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "github_repository_id")  
     private Long id;
 
     @Column(nullable = false)
@@ -40,18 +42,18 @@ public class GithubRepository extends BaseEntity {
     @Column(nullable = false)
     private String githubUrl;
 
-    @ElementCollection
-    @CollectionTable(
-            name = "github_repository_topic",
-            joinColumns = @JoinColumn(name = "repository_id")
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+            name = "repo_topic",
+            joinColumns = @JoinColumn(name = "repo_id"),
+            inverseJoinColumns = @JoinColumn(name = "topic_id")
     )
-    @Column(name = "topic")
-    private List<String> topics = new ArrayList<>();
+    private List<Topic> topics = new ArrayList<>();
 
     @Builder
     public GithubRepository(String name, String fullName, String description,
                             String language, int starCount, int forkCount,
-                            int openIssueCount, String githubUrl, List<String> topics) {
+                            int openIssueCount, String githubUrl) {
         this.name = name;
         this.fullName = fullName;
         this.description = description;
@@ -60,10 +62,17 @@ public class GithubRepository extends BaseEntity {
         this.forkCount = forkCount;
         this.openIssueCount = openIssueCount;
         this.githubUrl = githubUrl;
-        if (topics != null) this.topics = topics;
     }
 
-    // 분석 결과 업데이트 (더티 체킹 활용)
+    public List<String> getTopicNames() {
+        return topics.stream().map(Topic::getName).toList();
+    }
+
+    public void updateTopics(List<Topic> newTopics) {
+        this.topics.clear();
+        this.topics.addAll(newTopics);
+    }
+
     public void update(int starCount, int forkCount, int openIssueCount) {
         this.starCount = starCount;
         this.forkCount = forkCount;

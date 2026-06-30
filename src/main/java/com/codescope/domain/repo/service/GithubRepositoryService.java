@@ -3,13 +3,15 @@ package com.codescope.domain.repo.service;
 import com.codescope.domain.repo.dto.GithubRepositoryRequest;
 import com.codescope.domain.repo.dto.GithubRepositoryResponse;
 import com.codescope.domain.repo.entity.GithubRepository;
+import com.codescope.domain.repo.entity.Topic;
 import com.codescope.domain.repo.repository.GithubRepositoryJpaRepository;
+import com.codescope.domain.repo.repository.TopicJpaRepository;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 @Transactional(readOnly = true)
@@ -17,17 +19,18 @@ import java.util.stream.Collectors;
 public class GithubRepositoryService {
 
     private final GithubRepositoryJpaRepository repositoryJpaRepository;
+    private final TopicJpaRepository topicJpaRepository;
 
     public List<GithubRepositoryResponse> getAll() {
         return repositoryJpaRepository.findAll()
                 .stream()
                 .map(GithubRepositoryResponse::from)
-                .collect(Collectors.toList());
+                .toList();
     }
 
     public GithubRepositoryResponse getById(Long id) {
         GithubRepository entity = repositoryJpaRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("레포지토리를 찾을 수 없습니다. id=" + id));
+                .orElseThrow(() -> new EntityNotFoundException("레포지토리를 찾을 수 없습니다. id=" + id));
         return GithubRepositoryResponse.from(entity);
     }
 
@@ -35,7 +38,7 @@ public class GithubRepositoryService {
         return repositoryJpaRepository.findByLanguageOrderByStarCountDesc(language)
                 .stream()
                 .map(GithubRepositoryResponse::from)
-                .collect(Collectors.toList());
+                .toList();
     }
 
     @Transactional
@@ -53,16 +56,25 @@ public class GithubRepositoryService {
                 .forkCount(request.getForkCount())
                 .openIssueCount(request.getOpenIssueCount())
                 .githubUrl(request.getGithubUrl())
-                .topics(request.getTopics())
                 .build();
 
-        return GithubRepositoryResponse.from(repositoryJpaRepository.save(entity));
+        repositoryJpaRepository.save(entity);
+
+        if (request.getTopics() != null && !request.getTopics().isEmpty()) {
+            List<Topic> resolvedTopics = request.getTopics().stream()
+                    .map(name -> topicJpaRepository.findByName(name)
+                            .orElseGet(() -> topicJpaRepository.save(Topic.of(name))))
+                    .toList();
+            entity.updateTopics(resolvedTopics);
+        }
+
+        return GithubRepositoryResponse.from(entity);
     }
 
     @Transactional
     public void delete(Long id) {
         GithubRepository entity = repositoryJpaRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("레포지토리를 찾을 수 없습니다. id=" + id));
+                .orElseThrow(() -> new EntityNotFoundException("레포지토리를 찾을 수 없습니다. id=" + id));
         repositoryJpaRepository.delete(entity);
     }
 }

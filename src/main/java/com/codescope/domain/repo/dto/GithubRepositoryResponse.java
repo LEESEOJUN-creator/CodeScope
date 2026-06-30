@@ -35,7 +35,7 @@ public class GithubRepositoryResponse {
                 .forkCount(entity.getForkCount())
                 .openIssueCount(entity.getOpenIssueCount())
                 .githubUrl(entity.getGithubUrl())
-                .topics(entity.getTopics())
+                .topics(entity.getTopicNames())
                 .createdAt(entity.getCreatedAt())
                 .updatedAt(entity.getUpdatedAt())
                 .build();

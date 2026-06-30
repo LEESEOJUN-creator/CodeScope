@@ -56,7 +56,7 @@ dependencies {
 	developmentOnly 'org.springframework.boot:spring-boot-devtools'
 
 	// Swagger
-	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0'
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.9'
 
 	// QueryDSL (동적 검색 - Day 9에서 사용)
 	implementation 'com.querydsl:querydsl-jpa:5.0.0:jakarta'
