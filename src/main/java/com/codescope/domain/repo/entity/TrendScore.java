@@ -16,6 +16,7 @@ public class TrendScore extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "trend_score_id")
     private Long id;
 
     @OneToOne(fetch = FetchType.LAZY)

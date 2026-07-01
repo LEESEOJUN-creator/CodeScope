@@ -1,4 +1,4 @@
-package com.codescope.api.controller;
+package com.codescope.api.controller.repo;
 
 import com.codescope.common.response.ApiResponse;
 import com.codescope.domain.repo.dto.GithubRepositoryRequest;

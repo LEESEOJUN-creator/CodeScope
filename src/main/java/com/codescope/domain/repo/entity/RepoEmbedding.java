@@ -14,6 +14,7 @@ public class RepoEmbedding extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "repo_embedding_id")
     private Long id;
 
     @OneToOne(fetch = FetchType.LAZY)

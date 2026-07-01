@@ -2,6 +2,10 @@ spring:
   application:
     name: codescope
 
+  threads:
+    virtual:
+      enabled: true
+
   # ──────────────────────────────────────
   # PostgreSQL 설정
   # 왜: GithubRepo, Topic, Issue 등 모든 도메인 데이터를 저장하는 메인 DB

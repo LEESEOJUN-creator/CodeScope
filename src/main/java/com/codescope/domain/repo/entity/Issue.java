@@ -14,6 +14,7 @@ public class Issue extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "issue_id")
     private Long id;
 
     @Column(nullable = false)
@@ -45,5 +46,9 @@ public class Issue extends BaseEntity {
 
     public void close() {
         this.state = IssueState.CLOSED;
+    }
+
+    public void reopen() {
+        this.state = IssueState.OPEN;
     }
 }
