@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+# 이 Service 이름(postgres)이 클러스터 내부 DNS로 동작해서
+# Spring Boot가 jdbc:postgresql://postgres:5432/codescope 로 접속할 수 있다.

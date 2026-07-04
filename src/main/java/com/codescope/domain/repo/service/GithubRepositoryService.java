@@ -22,7 +22,7 @@ public class GithubRepositoryService {
     private final TopicJpaRepository topicJpaRepository;
 
     public List<GithubRepositoryResponse> getAll() {
-        return repositoryJpaRepository.findAll()
+        return repositoryJpaRepository.findAllWithTopics()
                 .stream()
                 .map(GithubRepositoryResponse::from)
                 .toList();

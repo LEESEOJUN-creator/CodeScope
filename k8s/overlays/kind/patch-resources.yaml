@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  template:
+    spec:
+      containers:
+        - name: postgres
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 250m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  template:
+    spec:
+      containers:
+        # redis는 인메모리 캐시라 지금 단계에서 데이터량이 적고,
+        # postgres는 실제 도메인 데이터를 담당해 상대적으로 더 여유를 줌
+        - name: redis
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 100m
+            limits:
+              memory: 256Mi
+              cpu: 200m

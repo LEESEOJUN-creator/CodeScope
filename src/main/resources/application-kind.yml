@@ -1,0 +1,74 @@
+# ──────────────────────────────────────
+# kind 프로파일 전용 설정
+# 왜 이 파일이 필요한가:
+#   application.yml(공통) 위에 "kind 환경에서만 다른 값"을 얹는 파일.
+#   Kustomize의 base/overlay와 동일한 원리 — 공통 로직은 그대로 두고
+#   환경별 차이(host, port)만 이 파일에서 관리
+# 왜 지금 이 시점(Day6~7)에 분리하는가:
+#   Docker Compose PostgreSQL을 끄고 kind Pod로 완전히 전환하는 시점이라,
+#   "이 설정이 kind를 가리킨다"는 의도를 코드로 명시해두기 위함
+# ──────────────────────────────────────
+
+spring:
+  # ──────────────────────────────────────
+  # PostgreSQL 설정 (kind Pod 대상)
+  # 왜: GithubRepo, Topic, Issue 등 모든 도메인 데이터를 저장하는 메인 DB
+  # 왜 PostgreSQL인가: pgvector 확장을 지원하는 DB 중 가장 널리 쓰임
+  #                    벡터 유사도 검색을 별도 DB 없이 PostgreSQL 하나로 해결
+  # 왜 host가 여전히 localhost인가:
+  #   kind Pod는 클러스터 내부 네트워크에 있어서 로컬 PC에서 직접 접근 불가.
+  #   kubectl port-forward service/postgres 5432:5432 로 로컬 5432 포트를
+  #   Pod의 5432 포트에 터널링해둔 상태이므로, Spring Boot 입장에서는
+  #   "로컬 PostgreSQL에 접속하는 것"처럼 보이지만 실제로는 그 뒤에서
+  #   kind Pod로 요청이 전달됨. (port-forward를 반드시 켜둔 상태에서 실행)
+  # ──────────────────────────────────────
+  datasource:
+    url: jdbc:postgresql://localhost:5432/codescope
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+
+  # ──────────────────────────────────────
+  # Redis 설정 (kind Pod 대상, Day11부터 실제 사용)
+  # 왜: 두 가지 목적
+  #   1. 실시간 트렌드 랭킹 (Sorted Set - ZINCRBY/ZRANGE)
+  #      → DB에서 매번 ORDER BY stars 쿼리 실행 시 데이터가 쌓일수록 느려짐
+  #      → Redis는 인메모리라 수 ms 응답
+  #   2. 중복 수집 방지 (setIfAbsent)
+  #      → 같은 레포를 두 번 처리하면 안 됨
+  #      → DB 조회로 중복 확인하면 race condition 발생 가능
+  #      → setIfAbsent는 atomic 연산으로 중복 방지 보장
+  # 지금은 AutoConfigure에서 제외돼 있어 값만 미리 준비해둔 상태.
+  # Day11에 kubectl port-forward service/redis 6379:6379 로 접속 예정
+  # ──────────────────────────────────────
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+  # ──────────────────────────────────────
+  # Kafka 설정 (kind Pod 대상, Day15~18부터 실제 사용)
+  # 왜: GitHub README 임베딩 생성이 레포 1개당 약 3초 걸림
+  #     레포 200개를 동기로 처리하면 10분 → 스케줄러 다음 사이클과 겹침
+  #     Kafka로 수집 이벤트를 발행하면 즉시 응답하고
+  #     Consumer가 백그라운드에서 임베딩 처리
+  # 왜 @Async 대신 Kafka인가:
+  #     @Async: JVM 스레드풀 → 앱 재시작 시 처리 중 작업 유실
+  #     Kafka: 브로커에 메시지 영속 저장 → 재시작해도 이어서 처리 가능
+  # 지금은 AutoConfigure에서 제외돼 있어 값만 미리 준비해둔 상태.
+  # Day18에 kind에 Kafka Pod 배포 후 실제 연결 예정
+  # ──────────────────────────────────────
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: codescope-group
+      auto-offset-reset: earliest
+      # 왜 enable-auto-commit: false인가:
+      #   true면 메시지 받는 순간 커밋 → 처리 실패해도 커밋됨 → 메시지 유실
+      #   false면 처리 완료 후 수동 커밋 → 실패 시 재처리 가능
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer

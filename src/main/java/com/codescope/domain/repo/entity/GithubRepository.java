@@ -19,7 +19,7 @@ public class GithubRepository extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "github_repository_id")  
+    @Column(name = "github_repository_id")
     private Long id;
 
     @Column(nullable = false)
@@ -50,6 +50,14 @@ public class GithubRepository extends BaseEntity {
     )
     private List<Topic> topics = new ArrayList<>();
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private ProcessStatus processStatus = ProcessStatus.COLLECTED;
+
+    public enum ProcessStatus {
+        COLLECTED, EMBEDDED, FAILED
+    }
+
     @Builder
     public GithubRepository(String name, String fullName, String description,
                             String language, int starCount, int forkCount,
@@ -77,5 +85,13 @@ public class GithubRepository extends BaseEntity {
         this.starCount = starCount;
         this.forkCount = forkCount;
         this.openIssueCount = openIssueCount;
+    }
+
+    public void markEmbedded() {
+        this.processStatus = ProcessStatus.EMBEDDED;
+    }
+
+    public void markFailed() {
+        this.processStatus = ProcessStatus.FAILED;
     }
 }
