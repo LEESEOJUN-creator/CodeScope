@@ -2,12 +2,16 @@ package com.codescope.domain.repo.service;
 
 import com.codescope.domain.repo.dto.GithubRepositoryRequest;
 import com.codescope.domain.repo.dto.GithubRepositoryResponse;
+import com.codescope.domain.repo.dto.SearchCondition;
 import com.codescope.domain.repo.entity.GithubRepository;
 import com.codescope.domain.repo.entity.Topic;
 import com.codescope.domain.repo.repository.GithubRepositoryJpaRepository;
+import com.codescope.domain.repo.repository.GithubRepositoryQueryRepository;
 import com.codescope.domain.repo.repository.TopicJpaRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +24,7 @@ public class GithubRepositoryService {
 
     private final GithubRepositoryJpaRepository repositoryJpaRepository;
     private final TopicJpaRepository topicJpaRepository;
+    private final GithubRepositoryQueryRepository repositoryQueryRepository;
 
     public List<GithubRepositoryResponse> getAll() {
         return repositoryJpaRepository.findAllWithTopics()
@@ -69,6 +74,11 @@ public class GithubRepositoryService {
         }
 
         return GithubRepositoryResponse.from(entity);
+    }
+
+    public Page<GithubRepositoryResponse> searchRepositories(SearchCondition condition, Pageable pageable) {
+        return repositoryQueryRepository.search(condition, pageable)
+                .map(GithubRepositoryResponse::from);
     }
 
     @Transactional

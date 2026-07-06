@@ -3,11 +3,15 @@ package com.codescope.api.controller.repo;
 import com.codescope.common.response.ApiResponse;
 import com.codescope.domain.repo.dto.GithubRepositoryRequest;
 import com.codescope.domain.repo.dto.GithubRepositoryResponse;
+import com.codescope.domain.repo.dto.SearchCondition;
 import com.codescope.domain.repo.service.GithubRepositoryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -38,6 +42,21 @@ public class GithubRepositoryController {
     @GetMapping("/language/{language}")
     public ResponseEntity<ApiResponse<List<GithubRepositoryResponse>>> getByLanguage(@PathVariable String language) {
         return ResponseEntity.ok(ApiResponse.success(githubRepositoryService.getByLanguage(language)));
+    }
+
+    @Operation(summary = "동적 조건 레포지토리 검색")
+    @GetMapping("/search")
+    public ResponseEntity<ApiResponse<Page<GithubRepositoryResponse>>> search(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String language,
+            @RequestParam(required = false) String topic,
+            @RequestParam(required = false) Integer minStars,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        SearchCondition condition = new SearchCondition(keyword, language, topic, minStars);
+        Pageable pageable = PageRequest.of(page, size);
+        return ResponseEntity.ok(ApiResponse.success(githubRepositoryService.searchRepositories(condition, pageable)));
     }
 
     @Operation(summary = "레포지토리 저장")

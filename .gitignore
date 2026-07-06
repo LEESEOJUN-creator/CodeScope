@@ -21,3 +21,8 @@ Thumbs.db
 # Claude Code 보안 로그
 .claude/hooks/security.log
 .claude/hooks/debug.log
+
+# 로그 파일
+*.log
+*_log.txt
+test_log.txt
