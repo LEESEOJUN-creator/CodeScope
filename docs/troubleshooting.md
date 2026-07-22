@@ -96,3 +96,70 @@ SQL 로그로 확인됨. 위 측정 결과 서술의 "limit/offset" 표현은 �
 
 - `GithubRepositoryQueryRepositoryPaginationTest` — 9개 케이스 전부 통과,
   기존 테스트 회귀 없음
+
+### DB 인덱스 적용 전/후 비교
+
+**목적**: Day 9 QueryDSL 동적 검색 조건(`language`, `star_count`)에 대해, 인덱스
+유무가 실제 쿼리 실행 방식과 성능에 어떤 영향을 주는지 실측 검증.
+
+**측정 환경**: `github_repository` 테이블에 더미 데이터 100,000건(language 6종
+균등분포, star_count 0~100000 랜덤)을 넣은 상태에서, 다음 단일 컬럼 인덱스
+2개만 생성(복합 인덱스는 생성하지 않음):
+```sql
+CREATE INDEX idx_repo_language ON github_repository (language);
+CREATE INDEX idx_repo_star_count ON github_repository (star_count);
+```
+
+**결과**:
+
+| 쿼리 | 인덱스 전 스캔방식 | 인덱스 전 Rows Removed by Filter | 인덱스 후 스캔방식 | 인덱스 후 Filter |
+|---|---|---|---|---|
+| language='Java' | Seq Scan | 83208 | Bitmap Heap Scan (+ Bitmap Index Scan) | 없음 (Index Cond) |
+| star_count>90000 | Seq Scan | 89901 | Bitmap Heap Scan (+ Bitmap Index Scan) | 없음 (Index Cond) |
+| language='Java' AND star_count>90000 | Seq Scan | 98339 | BitmapAnd (두 인덱스 결합) → Bitmap Heap Scan | 없음 (Recheck Cond) |
+
+**실측 Execution Time (ms)**:
+
+| 쿼리 | 인덱스 전 Run1 | 인덱스 전 Run2 | 인덱스 후 |
+|---|---|---|---|
+| language='Java' | 20.047 | 37.792 | 7.566 |
+| star_count>90000 | 12.266 | 10.110 | 11.114 |
+| language='Java' AND star_count>90000 | 11.898 | 50.077 | 8.512 |
+
+인덱스 전 값은 `kubectl exec`로 파드 내 psql을 매번 새 프로세스로 띄워 측정한
+값이고, 인덱스 후 값은 GUI SQL 클라이언트로 이미 연결된 세션에서 직접 측정한
+값이다. `kubectl exec`는 호출마다 새 exec 세션을 띄우는 오버헤드가 섞여
+편차가 컸던 반면(같은 쿼리가 인덱스 전 상태에서도 Run1/Run2 간 최대 4배
+차이), GUI 클라이언트 측정값은 세 쿼리 모두 5.8~11.1ms 사이로 훨씬
+안정적이었음. 두 측정 모두 서버(PostgreSQL)가 계산하는 `Execution Time`
+자체는 동일한 지표이므로, 쿼리 플랜(Bitmap Heap Scan, BitmapAnd 등)이
+동일한 이상 GUI 클라이언트로 측정한 값이 노이즈가 적은 값으로 판단해 채택함.
+
+**왜 Index Scan이 아니라 Bitmap Heap Scan인가**: `language='Java'`(16.8%),
+`star_count>90000`(10.1%)처럼 반환 비율이 중간 수준일 때는 순수 Index Scan(랜덤
+I/O 다수 발생)보다, 인덱스로 비트맵을 먼저 만들고 힙을 페이지 순서로 훑는
+Bitmap Heap Scan이 더 효율적이라고 옵티마이저가 판단함. Filter가 Index
+Cond/Recheck Cond로 대체되어, 조건에 안 맞는 행을 읽고 버리는 과정 자체가 사라짐.
+
+**복합 조건에서 단일 인덱스 조합이 어떻게 동작했는가**: `BitmapAnd`로
+`idx_repo_language`, `idx_repo_star_count` 각각의 비트맵을 만든 뒤 교집합(1661건)만
+골라서 힙을 읽음. 복합 인덱스(`language, star_count`) 없이도 단일 컬럼 인덱스
+2개 조합만으로 Filter 없는 효율적인 조회가 가능함을 확인. 단, 이번 조건은
+language의 선택도가 낮지 않아(16.8%) BitmapAnd 비용이 크지 않았던 것으로,
+조건 선택도가 다른 경우(예: 두 조건 각각은 안 희소한데 교집합만 극도로
+희소한 경우) 복합 인덱스가 유리할 수 있어 결론을 일반화하지 않음.
+
+**실행시간(ms)에 대한 메모**: 인덱스 전(`kubectl exec` 기반) 측정은 같은 쿼리도
+Run1/Run2 간 최대 4배 가까이 편차가 있었던 반면, 인덱스 후(GUI 클라이언트
+직접 측정) 값은 세 쿼리 모두 5.8~11.1ms 사이로 훨씬 안정적이었음. 그럼에도
+절대 시간 수치는 측정 도구/세션에 따라 달라질 수 있어 참고용으로만 기록.
+핵심 근거는 스캔 방식 변화(Seq Scan→Bitmap Heap Scan)와 Rows Removed by
+Filter가 완전히 사라진 것(인덱스가 실제로 활용되고 있다는 가장 신뢰할 수
+있는 증거). 100,000행 규모는 측정 방식에 따른 편차가 인덱스 유무 자체보다
+크게 보일 수 있는 구간이라는 점을
+명시.
+
+**결론**: 인덱스 적용으로 Seq Scan(전체 스캔+필터링)에서 Bitmap Heap
+Scan/BitmapAnd(조건에 맞는 행만 직접 조회)로 전환됨을 확인. 단일 컬럼 인덱스
+2개 조합만으로 동적 검색 조건(Day 9 QueryDSL)의 다양한 조합에 유연하게 대응
+가능.
