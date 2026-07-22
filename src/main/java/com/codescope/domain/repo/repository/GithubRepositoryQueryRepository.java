@@ -40,6 +40,7 @@ public class GithubRepositoryQueryRepository {
         List<GithubRepository> content = queryFactory
                 .selectFrom(repo)
                 .where(builder)
+                .orderBy(repo.id.asc())
                 .offset(pageable.getOffset())
                 .limit(pageable.getPageSize())
                 .fetch();

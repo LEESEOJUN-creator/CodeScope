@@ -141,3 +141,17 @@ llm:
     base-url: http://localhost:11434
   openai:
     api-key: ${OPENAI_API_KEY:}
+
+# ──────────────────────────────────────
+# SQL 로그 레벨
+# 왜: show-sql: true는 Hibernate가 System.out으로 직접 출력해
+#     SLF4J/Logback 로거를 거치지 않음 → 테스트 코드에서 로그를 캡처할 수 없음
+#     org.hibernate.SQL을 DEBUG로 켜면 동일한 SQL이 Logback을 통해서도 나가
+#     ListAppender 등으로 자동 검증 가능해짐
+# org.hibernate.orm.jdbc.bind: TRACE는 "?" 바인드 파라미터에 실제로 어떤 값이
+#     들어갔는지 콘솔에서 눈으로 확인하기 위함 (offset/limit 값 검증용)
+# ──────────────────────────────────────
+logging:
+  level:
+    org.hibernate.SQL: DEBUG
+    org.hibernate.orm.jdbc.bind: TRACE

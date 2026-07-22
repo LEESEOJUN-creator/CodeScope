@@ -60,3 +60,39 @@ SQL 로그 상 topics 조회 쿼리가 3번(N+1)이 아니라 `WHERE repo_id = a
 ### 관련 테스트
 
 - `GithubRepositoryQueryRepositoryTest#search_결과_topics_LAZY_로딩_배치조회` — `@BatchSize` 배치 쿼리 검증
+
+### 페이지네이션 검증
+
+**문제**: 위 "메인 검색 쿼리는 offset/limit이 정상적으로 SQL 레벨에서 걸림"이라는
+서술이 이를 뒷받침하는 테스트 없이 문서에만 적혀 있었음. QueryDSL
+`BooleanBuilder`로 동적 조건을 조합하는 구조에서는 조건 분기 추가/수정 과정에서
+페이징 파라미터(`offset`/`limit`)가 누락되거나 count 쿼리가 아예 안 나가는
+실수가 흔히 발생할 수 있어, 별도 검증이 필요했음.
+
+**검증 방법**: `GithubRepositoryQueryRepositoryPaginationTest`를 별도 클래스로
+작성. 결과값 검증(`content` 크기, `totalElements`, `totalPages`)과 함께,
+Logback `ListAppender`를 `org.hibernate.SQL` 로거에 붙여 `search()` 실행 중
+실제로 나간 SQL 텍스트를 자동으로 캡처·검증하는 방식을 사용. 다음 케이스를
+포함:
+- 정상 페이징: 15건을 `size=5`로 조회
+- 마지막 페이지 불균등 케이스: 17건을 `size=5`로 조회
+- 빈 결과 케이스: 조건에 맞는 데이터가 없는 경우
+
+**측정 결과 (SQL 로그 기반)**:
+- 이 Hibernate 6.6 + PostgreSQL 15 조합은 `LIMIT`/`OFFSET`이 아니라 ANSI
+  표준 구문 `order by ... offset ? rows fetch first ? rows only`를 생성함
+- 컨텐츠 조회 쿼리와 count 쿼리가 분리되어 각각 나가며, 두 쿼리 모두
+  `repo_topic` 조인이 섞여 있지 않음 (topics는 위 배치 쿼리 사례처럼 별도
+  `@BatchSize` IN절로 처리됨)
+- 마지막 페이지(17건, `size=5`, `page=3`) 요청 시 `offset=15`,
+  `fetch first=5`로 바인딩되지만, 실제로는 남은 2건만 반환됨 — DB에
+  `fetch first` 개수보다 적게 남으면 있는 만큼만 반환하는 정상 동작
+
+**결론**: 페이지네이션은 DB 레벨에서 정상 동작하며 메모리 페이징이 아님이
+SQL 로그로 확인됨. 위 측정 결과 서술의 "limit/offset" 표현은 실제 생성되는
+구문에 맞춰 "offset/fetch"(ANSI 표준 구문)로 정정.
+
+### 관련 테스트 (페이지네이션)
+
+- `GithubRepositoryQueryRepositoryPaginationTest` — 9개 케이스 전부 통과,
+  기존 테스트 회귀 없음
