@@ -163,3 +163,73 @@ Filter가 완전히 사라진 것(인덱스가 실제로 활용되고 있다는 
 Scan/BitmapAnd(조건에 맞는 행만 직접 조회)로 전환됨을 확인. 단일 컬럼 인덱스
 2개 조합만으로 동적 검색 조건(Day 9 QueryDSL)의 다양한 조합에 유연하게 대응
 가능.
+
+## Flyway 마이그레이션 도입
+
+**문제/배경**: `ddl-auto: create-drop` 방식으로 스키마를 운영해오면서, Spring
+Boot 앱이 재시작될 때마다 Hibernate가 스키마를 drop 후 재생성하는 문제가
+있었음. Day 10 인덱스 실측 도중 앱이 꺼진 상태에서 테이블 자체가 없어서
+raw DDL로 스키마를 임시로 재현해야 했던 사례가 실제 계기가 됨. 원래 계획은
+4주차(pgvector 전환 시) Flyway 도입이었으나, 그 시점엔 테이블이 더 많고
+실데이터도 쌓여 스키마 역산이 어려워지므로 2주차로 조기 도입.
+
+**적용 내용**:
+- `build.gradle`: `flyway-core`, `flyway-database-postgresql` 의존성 추가
+- `application.yaml`: `ddl-auto`를 `create-drop` → `validate`로 전환
+- `src/main/resources/db/migration/V1__init.sql` 작성
+  - 엔티티 8개(GithubRepository, Topic, Issue, TrendScore, RepoEmbedding,
+    User, UserFavorite, UserSkill) + `@ManyToMany` 중간테이블 `repo_topic`,
+    총 9개 물리 테이블의 `CREATE TABLE`
+  - FK 제약 9개, UNIQUE 제약 7개, CHECK 제약 2개(`process_status`,
+    `issues.state` — 각 엔티티 실제 enum 값과 대조 검증 완료), `repo_topic`
+    복합 PK(엔티티 애노테이션엔 없으나 중복 방지 목적으로 추가)
+  - Day 10에서 실측 검증된 인덱스 2개(`idx_repo_language`,
+    `idx_repo_star_count`) 포함
+- `V1__init.sql`은 스키마(DDL)만 포함하며 데이터 INSERT는 없음 (적용 직후
+  9개 테이블은 모두 빈 상태)
+
+**트러블슈팅 - 최초 적용 시도 실패**:
+- 문제: `Found non-empty schema(s) "public" but no schema history table.`
+  에러 발생
+- 원인: 라이브 DB에 이전(Day 10) raw DDL로 만든 `github_repository` 테이블이
+  삭제 안 된 채 남아있었음. Flyway는 `flyway_schema_history` 기록 없이
+  기존 스키마가 존재하면, 의도치 않은 덮어쓰기를 막기 위해 실행을 중단함
+- 해결: `baselineOnMigrate` 같은 우회 설정을 쓰지 않고, 남은 테이블을
+  완전히 삭제한 뒤 재시도 (`DROP TABLE ... CASCADE`로 완전히 빈 스키마
+  확보 후 재실행)
+
+**검증 결과**:
+- 1차 실행: 로그에 `Migrating schema "public" to version "1 - init"`
+  → `Successfully applied 1 migration` 확인
+- `ddl-auto: validate` 통과, 앱 정상 기동
+- DB 확인: `flyway_schema_history` 테이블 생성(version=1, description=init,
+  script=V1__init.sql, success=true) + 9개 테이블 전부 생성 +
+  `github_repository`에 인덱스 2개/CHECK/FK 정상 부착
+- 앱 재시작 검증(핵심): 앱을 껐다 다시 켰을 때, 로그에 `Migrating schema`
+  문구 없이 `Current version of schema "public": 1`만 확인하고 통과
+  → Flyway가 V1을 재실행하지 않고 스킵함을 확인
+- 결론: 이전에는 앱 재시작만으로 스키마가 사라지던 문제가, Flyway 도입
+  후에는 재현되지 않음을 실측으로 증명
+
+**알아두어야 할 한계 (참고 메모)**:
+- 현재 kind 매니페스트(`k8s/base/postgres-deployment.yaml`)의 PostgreSQL
+  볼륨은 `emptyDir`로 설정되어 있어, Flyway는 "Spring Boot 앱 재시작"으로
+  인한 스키마 유실만 방지하며, PostgreSQL Pod 자체가 재생성되는 경우
+  (emptyDir 초기화)에는 `flyway_schema_history`를 포함한 모든 데이터가
+  여전히 유실됨
+- 이 경우 Flyway는 V1부터 재실행해 스키마(빈 테이블)는 복구하지만
+  데이터는 복구하지 못함
+- 실제 데이터 보존이 필요한 시점(운영 배포 등)에는 PersistentVolumeClaim
+  전환이 필요하며, 이는 현재 매니페스트에 주석으로 계획되어 있음
+  (아직 미적용 상태)
+
+**추가 발견 및 조치 (V2)**: Day 9~10에서 실제 쿼리 패턴과 인덱스 커버리지를
+전수 대조한 결과, `IssueJpaRepository.findByRepositoryId()`가 조회하는
+`issues.repo_id` 컬럼에 인덱스가 없음을 확인. FK 제약은 있었으나 PostgreSQL은
+FK에 자동으로 인덱스를 만들지 않으므로 Seq Scan이 되는 공백이었음.
+`V2__add_issues_repo_id_index.sql`로 `idx_issues_repo_id` 인덱스를 추가
+(V1은 수정하지 않음). Flyway 로그상 V1은 재실행 없이 스킵되고 V2만 적용됨을
+확인(`Current version: 1` → `Migrating ... version "2"` →
+`Successfully applied 1 migration`). `flyway_schema_history`에 version 1, 2
+모두 success=true로 기록됨. 대량 데이터 기반 Seq Scan→Index Scan 전환
+실측은 진행하지 않음(추후 실데이터 축적 시 확인 예정).

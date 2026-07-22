@@ -21,13 +21,14 @@ spring:
 
   jpa:
     hibernate:
-      # create-drop: 앱 시작 시 테이블 생성, 종료 시 삭제
-      # 왜 개발 단계에서 create-drop 쓰는가:
-      #   엔티티를 수정할 때마다 테이블을 자동으로 다시 만들어줌
-      #   → 스키마 변경이 잦은 개발 초기에 편함
-      # 주의: 운영 환경에서는 절대 쓰면 안 됨 → 데이터 전부 날아감
-      #       배포 시 validate 또는 none으로 변경
-      ddl-auto: create-drop
+      # validate: 스키마는 Flyway(V1__init.sql)가 관리하고, Hibernate는
+      #   엔티티 매핑과 실제 테이블 구조가 일치하는지만 검증
+      # 왜 create-drop에서 전환했는가:
+      #   2주차 시점엔 테이블 8개(물리적으로는 repo_topic 포함 9개)와
+      #   실 데이터가 쌓여 있어 스키마를 Flyway로 조기 캡처.
+      #   이제부터 스키마 변경은 엔티티 수정 + 새 Vn__*.sql 마이그레이션
+      #   파일 추가로 함께 진행 (V1__init.sql은 이후 수정 금지)
+      ddl-auto: validate
     show-sql: true      # SQL 로그 출력 (왜: N+1 문제 직접 눈으로 확인하기 위함)
     properties:
       hibernate:
