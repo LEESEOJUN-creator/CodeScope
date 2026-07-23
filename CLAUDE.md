@@ -25,8 +25,8 @@ CodeScope는 실시간 수집 + AI 분석 + 벡터 유사도 검색 + 사용자 
 ## 패키지 구조
 com.codescope
 ├── api/controller           ← GithubRepositoryController 등
-├── client/github             ← GitHub API 클라이언트 + OAuth (Day 6)
-├── client/llm                ← Ollama/OpenAI 클라이언트 (Day 15)
+├── client/github             ← GitHub API 클라이언트 + OAuth 
+├── client/llm                ← Ollama/OpenAI 클라이언트 
 ├── common/entity              ← BaseEntity
 ├── common/exception           ← GlobalExceptionHandler
 ├── common/response            ← ApiResponse<T>
@@ -37,9 +37,9 @@ com.codescope
 ├── domain/repo/dto            ← Request/Response DTO
 ├── domain/user                ← User, UserFavorite, UserSkill 엔티티 뼈대
 │                                 (entity/repository/service 세분화는
-│                                  서비스 로직 구현 시점인 4주차에 진행)
+│                                  서비스 로직 구현 시점에 진행)
 ├── infra/config               ← SwaggerConfig, SecurityConfig
-└── kafka/producer,consumer    ← Kafka 파이프라인 (Day 11)
+└── kafka/producer,consumer    ← Kafka 파이프라인 
 
 ## ERD
 GithubRepository - Topic         : ManyToMany (중간테이블 repo_topic)
@@ -76,8 +76,13 @@ User - UserSkill - Topic               : User(1)-UserSkill(N)-Topic(1)
   동일 트랜잭션 처리 가능. 현재 embeddingJson은 임시 TEXT
 - Flyway 조기 도입 (2주차, 원래 계획은 4주차): 4주차 시점엔 이미 테이블 8개와
   실 데이터가 쌓여 있어 V1__init.sql을 역산하기 어려워짐. 2주차에
-  ddl-auto: create-drop → validate로 전환해 스키마를 조기 캡처하고,
-  4주차엔 V2__change_embedding_to_vector.sql만 추가
+  ddl-auto: create-drop → validate로 전환해 스키마를 조기 캡처
+- Flyway 버전 이력: V1__init.sql(9개 테이블+FK/UNIQUE/CHECK+인덱스 2개) →
+  V2__add_issues_repo_id_index.sql(issues.repo_id, PostgreSQL은 FK 컬럼에
+  인덱스를 자동 생성하지 않음을 커버리지 감사 중 발견) 적용 완료.
+  다음 마이그레이션은 V3부터 — 4주차 pgvector 전환은
+  V3__change_embedding_to_vector.sql (V2는 이미 소비됨, 재사용 시
+  Flyway 체크섬 충돌로 거부됨)
 - GithubRepository.ProcessStatus(COLLECTED/EMBEDDED/FAILED): Kafka 파이프라인이
   Collect/Embed 두 단계로 나뉘어 있어, 중간 단계 실패 시 DB엔 있지만
   벡터는 없는 반쪽짜리 데이터(State Drift)가 생길 수 있음.
@@ -100,6 +105,22 @@ User - UserSkill - Topic               : User(1)-UserSkill(N)-Topic(1)
   (concurrency는 파티션 단위로만 확장, Consumer 내부 가상 스레드 병렬화 금지).
   I/O 대기 지점(API 호출)에는 가상 스레드 사용 가능 — 소비 순서와
   I/O 처리 방식은 별개 문제. DB unique 제약(fullName)으로 멱등성 보장
+
+### 캐싱/분산 락 (Redis)
+- 캐싱 적용 3조건: 읽기 빈도 높음 + 갱신 시점 예측 가능 + 약간의 지연 허용.
+  트렌드 랭킹·인기 레포 상세는 충족 → 캐싱 적용. 동적 검색 결과(조건 조합
+  무한, 즉시 정합성 필요)와 전체 목록(변경 예측 어려움)은 미충족 → 캐싱 안 함
+- 트렌드 랭킹: Sorted Set(ZINCRBY/ZREVRANGE)으로 정렬 상태 상시 유지,
+  매 요청 DB ORDER BY 재계산과 메인 커넥션 풀 점유를 방지
+- 중복 수집 방지: setIfAbsent(SET NX)로 확인+점유를 원자적 처리
+  (DB SELECT 후 INSERT 사이의 TOCTOU race condition 방지).
+  락 키는 repoId가 아니라 identifier(fullName) 기준 — Consumer가
+  신규 레포를 처리하는 시점엔 아직 DB PK가 없음
+- 캐시 TTL: "인기 레포만" 조건부 캐싱 대신 TTL 1시간 일괄 적용 —
+  자주 조회되는 항목은 히트가 반복되고 롱테일은 자연 소멸하므로
+  같은 효과를 더 단순하게 달성
+- Refresh Token: JWT는 발급 후 만료 전 서버가 취소 불가 → Refresh Token만
+  Redis String+TTL로 저장, 로그아웃 시 삭제로 즉시 무효화 보완
 
 ### AI/RAG
 - RAG: 단순 LLM 호출은 환각 발생, pgvector 검색 결과를 컨텍스트로 주입해 방지.
