@@ -233,3 +233,123 @@ FK에 자동으로 인덱스를 만들지 않으므로 Seq Scan이 되는 공백
 `Successfully applied 1 migration`). `flyway_schema_history`에 version 1, 2
 모두 success=true로 기록됨. 대량 데이터 기반 Seq Scan→Index Scan 전환
 실측은 진행하지 않음(추후 실데이터 축적 시 확인 예정).
+
+## Redis 도입 (트렌드 랭킹 + 중복 수집 방지)
+
+**배경**: 두 가지 문제를 해결해야 했음
+1. 트렌드 랭킹을 매 요청마다 PostgreSQL에서 `ORDER BY`로 재계산하는 비효율
+2. 다중 스레드/Consumer 환경에서 동일 레포지토리를 중복 수집할 수 있는
+   경쟁 상태(Race Condition, TOCTOU: Time-Of-Check to Time-Of-Use)
+
+### 트렌드 랭킹 - Sorted Set 채택
+
+**대안 비교**:
+- 일반 캐시(String/Hash)에 정렬 리스트를 통째로 저장: 순위 변경 시 전체
+  재구성 필요(O(N)), 개별 레포 순위 조회도 O(N)
+- Redis Sorted Set: `ZINCRBY`로 개별 member 점수만 갱신해도 내부적으로
+  정렬 상태 자동 유지(갱신 O(log N)), 상위 N개 조회(`ZREVRANGE`)도
+  O(log N + N)
+
+**구현**: `TrendService.increaseScore(Long repoId, double amount)`는
+`opsForZSet().incrementScore()`로 점수 누적. `getTopRepos(int count)`는
+`opsForZSet().reverseRangeWithScores()`로 상위 N개 조회 후 `List<Long>`으로
+변환. member 파싱 실패(`NumberFormatException`) 시 해당 항목만 로그 남기고
+스킵하도록 방어 처리(오염 데이터 하나로 전체 API가 죽는 것 방지).
+
+**측정(정렬 검증 테스트)**: 테스트 전용 repoId 3건(9001L, 9002L, 9003L)에 각각
+`increaseScore`로 점수 100, 250, 80을 부여한 뒤 `getTopRepos(3)` 호출 결과가
+`[9002, 9001, 9003]`(점수 250 > 100 > 80) 순서와 정확히 일치함을 확인
+(`containsExactly`로 순서까지 검증). 이후 최하위였던 9003에 `increaseScore(9003L,
+50)`을 추가 반영(80→130)해 9001(100)을 추월시킨 뒤 재조회한 결과, 순서가
+`[9002, 9003, 9001]`로 실제 역전됨을 확인.
+
+| 테스트 케이스 | 결과 | 소요 시간 |
+|---|---|---|
+| `getTopRepos_점수_내림차순_정렬` | PASS | 0.428s |
+| `getTopRepos_점수_역전_시_순위도_역전` | PASS | 0.139s |
+
+(`TrendServiceTest`, 2건 모두 PASS, 전체 소요 0.574s — 테스트용 member는
+`@AfterEach`에서 `opsForZSet().remove`로 3건만 개별 삭제해 실제 운영 데이터에
+영향 없음을 `ZSCORE` 조회로 재확인)
+
+### 중복 수집 방지 - setIfAbsent(SET NX) 기반 분산 락
+
+**원인**: "확인(조회)"과 "실행(저장)"을 별도 연산으로 분리하면(예: DB
+SELECT 후 INSERT), 그 사이 다른 스레드가 끼어들어 동일 대상을 중복
+처리할 여지가 생김. DB UNIQUE 제약 + 예외 처리로도 막을 수 있으나, 이
+방식은 스케줄러가 반복 호출하는 가벼운 체크 로직치고 트랜잭션/예외
+비용이 무거움.
+
+**해결**: `opsForValue().setIfAbsent(key, value, ttl)`로 확인+점유를 Redis
+서버 내 단일 원자적 명령으로 처리(Redis는 싱글 스레드로 명령을 처리하므로
+해당 명령 실행 도중 다른 요청이 끼어들 수 없음). TTL(10분)을 부여해
+비정상 상황에서 락이 영구적으로 안 풀리는 문제를 방지.
+
+**설계 변경**: 최초 `tryLock(Long repoId)`로 설계했으나, 이후 파이프라인
+설계(스케줄러 → Kafka Consumer가 신규 레포를 최초 처리하는 시점)를
+재검토한 결과, 신규 레포는 DB 저장 전이라 PK(repoId)가 아직 발급되지
+않은 상태일 수 있음을 확인. `tryLock`/`releaseLock`의 파라미터를
+`String identifier`로 변경해, GitHub의 fullName처럼 PK 생성 여부와
+무관하게 항상 존재하는 식별자를 기준으로 락을 걸도록 재설계.
+
+**측정(동시성 검증 테스트)**: `ExecutorService`(고정 스레드풀 10개)와
+`CountDownLatch` 3개(스레드 10개 전원의 준비 완료 확인용 `readyLatch`, 동시
+시작 신호용 `startLatch`, 전원 종료 대기용 `doneLatch`)로 모든 스레드가
+`tryLock()` 진입 직전까지 도달한 걸 확인한 뒤 동시에 시작하도록 동기화.
+동일 identifier(`"test-repo-concurrency"`)로 10개 스레드가 동시에 락 획득을
+시도한 결과, `AtomicInteger`로 집계한 성공(true) 횟수가 정확히 **1**, 나머지
+**9**개는 실패(false)로 처리됨을 확인(`assertThat(successCount.get()).isEqualTo(1)`
+통과). 실패한 9개 스레드 각각에서 `log.info("identifier=... 이미 처리 중")`이
+남아 실패 처리 경로도 정상 동작함을 로그로 교차 검증.
+
+`DuplicateCheckServiceTest`, 1건 PASS, 소요 시간 4.241s (스레드 10개가 동시에
+Redis `SETNX` 명령을 보내는 네트워크 왕복이 포함된 시간). 테스트 종료 후
+`@AfterEach`의 `releaseLock`으로 `lock:repo:test-repo-concurrency` 키를
+삭제했고, `EXISTS` 조회로 키가 실제로 안 남아있음을 재확인.
+
+### 캐싱 적용 범위 - @Cacheable 조건부 필터링 대신 TTL 활용
+
+**쟁점**: `GithubRepositoryService.getById(Long id)`에 조건 없이 `@Cacheable`을
+적용하면 "조회된 모든 id"가 캐시에 들어가, 애초 의도했던 "인기 레포만
+캐싱"과 어긋나는 것 아닌가 하는 문제 제기.
+
+**검토한 대안**:
+- 트렌드 상위 N개에 대해 별도 배치/스케줄러로 캐시 워밍: 캐싱 로직과
+  별개의 코드 경로가 추가로 필요해 복잡도 증가
+- `@Cacheable`의 `condition` 속성으로 SpEL 기반 조건부 캐싱: 다른 빈을
+  참조해 "인기 여부"를 매 호출마다 재판단해야 해 오히려 로직이 꼬임
+
+**결정**: 별도 필터링 로직을 두지 않고 TTL(1시간)만 부여. 실제로 자주
+조회되는(인기 있는) id는 캐시 히트가 반복되고, 어쩌다 조회되는 롱테일
+id는 TTL 경과 후 자연 소멸하므로, 별도 조건 로직 없이도 동일한 효과를
+더 단순한 구조로 달성.
+
+**구현**: `RedisConfig`에 `RedisCacheManager` 빈 등록
+(`RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofHours(1))`,
+`GenericJackson2JsonRedisSerializer`로 값 직렬화 - JSON 형태로 저장돼
+redis-cli로 직접 확인 가능). `getById`에 `@Cacheable(value="popularRepos",
+key="#id")`, `delete`에 `@CacheEvict(value="popularRepos", key="#id")` 적용.
+`save()`는 파라미터에 id가 없고 신규 생성이라 캐시 무효화 대상 자체가
+없어 대상에서 제외. star_count 갱신 시점의 `@CacheEvict` 연동은 해당
+갱신 메서드 자체가 아직 없어(추후 GitHub API 폴링 파이프라인 구현 시
+함께 추가 예정) 이번 범위에서 제외.
+
+### 트러블슈팅 - RedisAutoConfiguration exclude 잔존
+
+**문제**: `RedisConfig` 작성 전 확인 과정에서 `application.yml`의
+`autoconfigure.exclude` 목록에 `RedisAutoConfiguration`이 여전히 제외
+처리된 채로 남아있는 것을 발견(과거 Redis 미연동 시기에 걸어둔 설정이
+제거되지 않고 방치됨). 이 상태로 `RedisConfig`를 추가하면
+`RedisConnectionFactory` 빈 자체가 생성되지 않아 기동 실패로 이어질
+가능성이 있었음.
+
+**해결**: exclude 라인 제거 후 재기동, Redis 관련 자동설정이 정상
+활성화됨을 로그로 확인(Bootstrapping Spring Data Redis repositories).
+
+### 관련 테스트
+
+- `TrendServiceTest` — 2건 PASS(전체 0.574s). Sorted Set 점수 갱신
+  (100/250/80 → 9002/9001/9003 순서) 및 점수 역전(9003 +50 → 9002/9003/9001
+  순서로 변경) 검증
+- `DuplicateCheckServiceTest` — 1건 PASS(4.241s). 스레드 10개 동시 요청 시
+  락 획득 성공 1건/실패 9건(`AtomicInteger` 집계 기준) 검증

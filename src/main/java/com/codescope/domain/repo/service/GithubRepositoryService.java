@@ -10,6 +10,8 @@ import com.codescope.domain.repo.repository.GithubRepositoryQueryRepository;
 import com.codescope.domain.repo.repository.TopicJpaRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -33,6 +35,7 @@ public class GithubRepositoryService {
                 .toList();
     }
 
+    @Cacheable(value = "popularRepos", key = "#id")
     public GithubRepositoryResponse getById(Long id) {
         GithubRepository entity = repositoryJpaRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("레포지토리를 찾을 수 없습니다. id=" + id));
@@ -82,6 +85,7 @@ public class GithubRepositoryService {
     }
 
     @Transactional
+    @CacheEvict(value = "popularRepos", key = "#id")
     public void delete(Long id) {
         GithubRepository entity = repositoryJpaRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("레포지토리를 찾을 수 없습니다. id=" + id));

@@ -88,7 +88,6 @@ spring:
   # ──────────────────────────────────────
   autoconfigure:
     exclude:
-      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration      # Day 11 Redis 연결 후 제거
       - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration           # Day 15 Kafka 연결 후 제거
 
 # ──────────────────────────────────────
