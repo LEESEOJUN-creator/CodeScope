@@ -353,3 +353,132 @@ key="#id")`, `delete`에 `@CacheEvict(value="popularRepos", key="#id")` 적용.
   순서로 변경) 검증
 - `DuplicateCheckServiceTest` — 1건 PASS(4.241s). 스레드 10개 동시 요청 시
   락 획득 성공 1건/실패 9건(`AtomicInteger` 집계 기준) 검증
+
+## GitHub OAuth + JWT + Redis Refresh Token Rotation
+
+### Refresh Token 회전 시 조회·삭제 비원자성 (TOCTOU race condition)
+
+**문제**: `validateAndRotate`에서 Redis `get()`과 `delete()`를 두 번의 별도
+호출로 처리.
+
+**원인**: 두 호출 사이의 시간 간격에 동시 요청이 끼어들면 둘 다 검증을
+통과해 이중 회전이 발생. 먼저 발급된 토큰이 나중 요청에 덮어써져 정상
+사용자가 도난으로 오탐되는 false positive가 발생할 수 있음.
+
+**해결**: Redis `GETDEL`(Spring Data Redis의 `opsForValue().getAndDelete()`)로
+교체해 조회+삭제를 원자적으로 처리. 불일치 분기의 중복 `delete()` 호출도
+함께 제거.
+
+**참고**: Day 12 `DuplicateCheckService`의 `setIfAbsent`(SET NX)와 동일 원칙
+("확인+점유는 원자적으로").
+
+**트레이드오프**: `getAndDelete`는 조회 시점에 무조건 삭제되므로, 새 토큰
+발급 전 예외가 발생하면 토큰이 유실되어 재로그인이 필요함. 원자성 확보를
+우선한 선택.
+
+### HS256 서명 알고리즘이 강제되지 않음
+
+**문제**: `signWith(secretKey)`만 호출해 알고리즘을 명시하지 않음.
+
+**원인**: `Keys.hmacShaKeyFor()`는 키 길이에 따라 JCA 알고리즘을 자동
+선택(256bit→HmacSHA256, 384bit→HmacSHA384, 512bit→HmacSHA512).
+`JWT_SECRET`을 더 긴 값으로 교체하면 코드 변경 없이 서명 알고리즘이 조용히
+바뀌는 문제가 있음.
+
+**해결**: `signWith(secretKey, Jwts.SIG.HS256)`으로 명시해 키 길이와
+무관하게 알고리즘을 고정.
+
+### User 생성 시 동시성 충돌
+
+**문제**: `findOrCreateByGithub`이 `findByGithubId` 조회 후 없으면 `save`
+하는 구조라, 같은 `githubId`로 동시 요청 시 둘 다 조회에서 못 찾고 둘 다
+`save`를 시도.
+
+**원인**: `github_id`의 unique 제약으로 두 번째 저장이 거부되며
+`DataIntegrityViolationException`이 발생. 잡는 코드가 없어 500으로 떨어짐.
+
+**해결**: `save`를 try-catch로 감싸 `DataIntegrityViolationException` 발생
+시 `findByGithubId`로 재조회해 반환. DB의 unique 제약을 원자적 방어선으로
+활용.
+
+**참고**: `User`가 `GenerationType.IDENTITY`라 `save()` 시점에 즉시 INSERT가
+실행되어 이 지점에서 예외를 잡을 수 있음.
+
+### 쓰기 API가 인증 없이 열려있음
+
+**문제**: `SecurityConfig`에서 `/api/repos/**` 전체를 `permitAll`로 설정해
+POST/DELETE까지 비로그인 사용자가 호출 가능. 누구나 레포를 삭제할 수 있는
+상태였음.
+
+**원인**: 조회 API 공개 목적으로 경로 단위 `permitAll`을 적용하면서 HTTP
+메서드 구분을 하지 않음.
+
+**해결**: `requestMatchers(HttpMethod.GET, "/api/repos/**")`만 `permitAll`로
+두고, POST/PUT/PATCH/DELETE는 `authenticated()`로 분리. 쓰기 규칙을 먼저
+배치.
+
+**검증**: 토큰 없이 POST/DELETE 호출 시 401, Authorize 후 재호출 시 정상
+처리 확인.
+
+### 미인증 요청에 401 대신 리다이렉트 응답 위험
+
+**문제**: `oauth2Login()`이 등록된 상태에서 미인증 요청이 `authenticated()`
+경로에 들어오면 Spring Security 기본 동작으로 `/oauth2/authorization/github`로
+302 리다이렉트될 수 있음. REST API에서 프론트가 JSON 대신 리다이렉트를
+받게 됨.
+
+**원인**: 커스텀 `authenticationEntryPoint` 미설정.
+
+**해결**: `JwtAuthenticationEntryPoint`를 별도 클래스로 생성해
+`exceptionHandling().authenticationEntryPoint(...)`에 연결.
+`ApiResponse.error()` + 401 JSON으로 응답.
+
+**참고**: `accessDeniedHandler`(403)는 현재 `ROLE_USER` 단일 권한이고
+`hasRole` 기반 분기가 없어 도달 불가능한 경로이므로 의도적으로 생략.
+
+### 쿠키 secure 속성 하드코딩
+
+**문제**: `RefreshTokenCookieFactory`에 `secure(false)`가 코드에 박혀 있어
+HTTPS 배포 시 변경을 누락하면 토큰이 평문 전송 위험에 노출됨.
+
+**원인**: 로컬 http 환경에서 `secure(true)`면 브라우저가 쿠키를 저장/전송하지
+않아 임시로 false 고정.
+
+**해결**: `@Value("${jwt.cookie-secure:false}")`로 생성자 주입,
+`application.yaml`에 `${JWT_COOKIE_SECURE:false}` 추가해 환경변수로 제어.
+
+### 설계 결정 / 알려진 제약 (트러블슈팅 아님)
+
+위 6건과 달리 버그가 아니라 의도적으로 선택한 사항:
+
+- **Refresh Token 1세션 정책**: key가 `refresh:user:{userId}` 하나라 유저당
+  1개만 유지. 다른 기기 로그인 시 기존 세션이 무효화됨. 멀티 디바이스 지원이
+  필요하면 key에 deviceId를 추가하는 방식으로 확장 가능.
+- **로그인 성공 응답 방식**: 현재 `GithubOAuth2LoginSuccessHandler`가 JSON을
+  직접 응답 바디에 작성. 프론트엔드 미구현 상태에서 백엔드 검증 편의를 위한
+  선택이며, 프론트 연동 시 `sendRedirect`로 전환 예정.
+
+### 검증 결과
+
+자동화 테스트가 아닌 Swagger UI를 통한 수동 요청으로 확인한 항목:
+
+- GitHub OAuth 로그인 성공 → `users` 테이블에 User 생성 확인(`githubId`,
+  `email`, `username`, `profileImageUrl` 정상 저장)
+- Access Token payload 검증: `userId` 포함, `exp - iat = 900초`(15분) 일치,
+  header `alg = HS256` 확인
+- `refreshToken` 쿠키 속성 확인: `HttpOnly` 적용, `SameSite=Lax`, `Path=/`,
+  만료 2주 후로 설정됨
+- `POST /api/auth/refresh` 정상 동작: 200 + 새 accessToken 발급 확인
+- 소모된 Refresh Token 재사용 시도 → 401 반환 확인(Rotation 재사용 감지
+  동작)
+- 인증 없이 쓰기 API 호출 → 401 JSON 반환, 인증 후 재호출 → 정상 처리 확인
+
+**미측정 항목**: `GET /api/repos/trending`의 쿼리 수 비교(`fetchByLoop` vs
+`fetchByBatch`)는 Redis Sorted Set(`trending:repos`)에 실제 데이터가 없어
+측정 보류. Kafka 수집 파이프라인(Day 18~20) 구축 후 실제 데이터로 측정
+예정.
+
+### 관련 테스트
+
+현재 인증 플로우에 대한 자동화 테스트 클래스는 없음(위 검증 결과는 Swagger UI
+수동 호출 기준). 테스트 코드는 추후 별도 작업으로 추가 예정.

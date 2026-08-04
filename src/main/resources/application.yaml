@@ -7,6 +7,29 @@ spring:
       enabled: true
 
   # ──────────────────────────────────────
+  # GitHub OAuth2 로그인 설정
+  # 왜: 서비스 정체성과 일치, 사용자 GitHub 데이터 활용 가능,
+  #     비밀번호 직접 관리 불필요 (보안 위험 위임)
+  # registration 이름은 반드시 'github' 고정
+  #   → Spring Security 기본 콜백 경로 /login/oauth2/code/github와 일치해야 함
+  # provider/redirect-uri는 Spring Security가 GitHub을 기본 지원하므로 미기재
+  # 기본값 없이 ${GITHUB_CLIENT_ID}/${GITHUB_CLIENT_SECRET}만 참조
+  #   → 환경변수 누락 시 기동 실패 (조용히 잘못된 값으로 뜨는 것 방지)
+  # 실제 값은 .env(로컬) / K8s Secret(배포)에서만 주입
+  # .oauth2Login() 활성화는 SecurityConfig 다음 단계에서 처리
+  # ──────────────────────────────────────
+  security:
+    oauth2:
+      client:
+        registration:
+          github:
+            client-id: ${GITHUB_CLIENT_ID}
+            client-secret: ${GITHUB_CLIENT_SECRET}
+            scope:
+              - read:user
+              - user:email
+
+  # ──────────────────────────────────────
   # PostgreSQL 설정
   # 왜: GithubRepo, Topic, Issue 등 모든 도메인 데이터를 저장하는 메인 DB
   # 왜 PostgreSQL인가: pgvector 확장을 지원하는 DB 중 가장 널리 쓰임
@@ -141,6 +164,20 @@ llm:
     base-url: http://localhost:11434
   openai:
     api-key: ${OPENAI_API_KEY:}
+
+# ──────────────────────────────────────
+# JWT 설정
+# 왜 secret을 환경변수로 받는가:
+#     서명 키가 코드/설정 파일에 노출되면 누구나 토큰을 위조 가능
+#     로컬: .env 파일 / 배포: K8s Secret
+# jwt.secret은 HS256 최소 요구사항(256bit)을 충족하는 Base64 문자열이어야 함
+# access-expiration: 15분(900000ms), refresh-expiration: 2주(1209600000ms)
+# ──────────────────────────────────────
+jwt:
+  secret: ${JWT_SECRET}
+  access-expiration: ${JWT_ACCESS_EXPIRATION:900000}
+  refresh-expiration: ${JWT_REFRESH_EXPIRATION:1209600000}
+  cookie-secure: ${JWT_COOKIE_SECURE:false}
 
 # ──────────────────────────────────────
 # SQL 로그 레벨

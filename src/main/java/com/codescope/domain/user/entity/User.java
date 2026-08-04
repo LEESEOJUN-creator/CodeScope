@@ -1,4 +1,4 @@
-package com.codescope.domain.user;
+package com.codescope.domain.user.entity;
 
 import com.codescope.common.entity.BaseEntity;
 import jakarta.persistence.Column;

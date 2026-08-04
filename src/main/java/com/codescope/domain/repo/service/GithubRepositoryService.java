@@ -42,6 +42,13 @@ public class GithubRepositoryService {
         return GithubRepositoryResponse.from(entity);
     }
 
+    public List<GithubRepositoryResponse> getByIds(List<Long> ids) {
+        return repositoryJpaRepository.findByIdIn(ids)
+                .stream()
+                .map(GithubRepositoryResponse::from)
+                .toList();
+    }
+
     public List<GithubRepositoryResponse> getByLanguage(String language) {
         return repositoryJpaRepository.findByLanguageOrderByStarCountDesc(language)
                 .stream()

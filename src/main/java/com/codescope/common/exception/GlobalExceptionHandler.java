@@ -23,6 +23,13 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(e.getMessage()));
     }
 
+    @ExceptionHandler(RefreshTokenReuseException.class)
+    public ResponseEntity<ApiResponse<Void>> handleRefreshTokenReuse(RefreshTokenReuseException e) {
+        log.warn("[RefreshTokenReuse] {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(ApiResponse.error("인증이 만료되었습니다. 다시 로그인해주세요."));
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException e) {
         log.warn("[IllegalArgument] {}", e.getMessage());

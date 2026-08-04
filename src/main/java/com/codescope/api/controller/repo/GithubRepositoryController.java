@@ -5,6 +5,7 @@ import com.codescope.domain.repo.dto.GithubRepositoryRequest;
 import com.codescope.domain.repo.dto.GithubRepositoryResponse;
 import com.codescope.domain.repo.dto.SearchCondition;
 import com.codescope.domain.repo.service.GithubRepositoryService;
+import com.codescope.domain.repo.service.TrendService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -17,6 +18,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Tag(name = "GithubRepository", description = "GitHub 레포지토리 관리")
 @RestController
@@ -25,6 +30,7 @@ import java.util.List;
 public class GithubRepositoryController {
 
     private final GithubRepositoryService githubRepositoryService;
+    private final TrendService trendService;
 
     @Operation(summary = "전체 레포지토리 조회")
     @GetMapping
@@ -71,5 +77,34 @@ public class GithubRepositoryController {
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         githubRepositoryService.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "트렌드 랭킹 조회 (Redis Sorted Set 기반)")
+    @GetMapping("/trending")
+    public ResponseEntity<ApiResponse<List<GithubRepositoryResponse>>> getTrending(
+            @RequestParam(defaultValue = "10") int limit
+    ) {
+        List<Long> topRepoIds = trendService.getTopRepos(limit);
+        return ResponseEntity.ok(ApiResponse.success(fetchByBatch(topRepoIds)));
+    }
+
+    // 캐시(popularRepos) 적용된 getById를 id 개수만큼 반복 호출
+    // 캐시 히트가 많으면 쿼리 수가 적지만, 미스가 많으면 N번 SELECT
+    private List<GithubRepositoryResponse> fetchByLoop(List<Long> ids) {
+        return ids.stream()
+                .map(githubRepositoryService::getById)
+                .toList();
+    }
+
+    // findByIdIn으로 한 번에 조회 (SELECT 1번, 캐시 미적용)
+    // DB가 반환하는 순서를 보장하지 않아 트렌드 랭킹 순서(ids 순서)로 재정렬
+    private List<GithubRepositoryResponse> fetchByBatch(List<Long> ids) {
+        Map<Long, GithubRepositoryResponse> byId = githubRepositoryService.getByIds(ids).stream()
+                .collect(Collectors.toMap(GithubRepositoryResponse::getId, Function.identity()));
+
+        return ids.stream()
+                .map(byId::get)
+                .filter(Objects::nonNull)
+                .toList();
     }
 }
