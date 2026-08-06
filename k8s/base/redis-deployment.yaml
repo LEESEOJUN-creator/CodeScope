@@ -17,5 +17,17 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
+          command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
           ports:
             - containerPort: 6379
+          volumeMounts:
+            - name: redis-config
+              mountPath: /usr/local/etc/redis/redis.conf
+              subPath: redis.conf
+      volumes:
+        # ConfigMap을 수정해도 이미 떠 있는 Pod에는 자동 반영되지 않음
+        # (파일은 갱신되지만 redis-server 프로세스가 재시작 전까지 구 설정을 유지)
+        # 변경 후에는 kubectl rollout restart deployment/redis 필요
+        - name: redis-config
+          configMap:
+            name: redis-config

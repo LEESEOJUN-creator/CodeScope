@@ -6,3 +6,4 @@ resources:
 
 patches:
   - path: patch-resources.yaml
+  - path: redis-config-patch.yaml

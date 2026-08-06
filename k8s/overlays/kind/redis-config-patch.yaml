@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+data:
+  # kind 클러스터는 로컬 개발용 — 데이터 유실 허용, 메모리도 base보다 작게 유지
+  # (prod overlay는 별도 값으로 override 예정)
+  redis.conf: |
+    maxmemory 200mb
+    maxmemory-policy allkeys-lru
+    appendonly no

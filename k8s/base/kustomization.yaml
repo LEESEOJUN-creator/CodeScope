@@ -4,5 +4,6 @@ kind: Kustomization
 resources:
   - postgres-deployment.yaml
   - postgres-service.yaml
+  - redis-configmap.yaml
   - redis-deployment.yaml
   - redis-service.yaml
