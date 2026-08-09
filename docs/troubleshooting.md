@@ -482,3 +482,137 @@ HTTPS 배포 시 변경을 누락하면 토큰이 평문 전송 위험에 노출
 
 현재 인증 플로우에 대한 자동화 테스트 클래스는 없음(위 검증 결과는 Swagger UI
 수동 호출 기준). 테스트 코드는 추후 별도 작업으로 추가 예정.
+
+## DB 세마포어 배압 제어 실측
+
+**1. 배경**: 가상 스레드가 HikariCP `maximum-pool-size`(10)를 초과해 동시에
+커넥션을 요구하면 `SQLTransientConnectionException`이 발생할 위험이 있어,
+`DbSemaphoreConfig`(permits = `maximumPoolSize - reserve`)를 만들고
+`DbBackpressureLoadTest`로 효과를 실측 검증했다.
+
+**2. 1차 실측 (LOAD_SIZE=500, REPEAT_PER_THREAD=5)**
+
+| | success | transientConnFail | pendingMax | elapsedMs |
+|---|---|---|---|---|
+| 세마포어 없음 | 500 | 0 | 490 | 15339 |
+| 세마포어 있음 | 500 | 0 | 0 | 16087 |
+
+이 시점엔 예외는 0건이었으나 `pendingMax=490`으로 "실패는 안 났지만
+위험한 대기 상태"였음이 `HikariPoolMXBean.getThreadsAwaitingConnection()`
+지표로 확인됨. 예외 건수만으론 보이지 않는 위험을 이 지표가 드러냄.
+
+**3. 2차 실측 (`REPEAT_PER_THREAD`를 5→20으로만 변경, LOAD_SIZE=500 유지)**
+
+세마포어 없음: `transientConnFail` 여전히 0건, `elapsedMs` 15.3s → 53.1s로
+증가.
+
+`REPEAT_PER_THREAD`를 늘리는 것은 "커넥션 점유 시간"을 늘리는 것이라
+대기자 수 자체가 늘지 않아 30초 타임아웃 벽에 부딪히지 않았음을 확인.
+이후 LOAD_SIZE(동시 요청 수) 증가가 더 적절한 변수라고 판단해 방향 전환.
+
+**4. 3차 실측 (LOAD_SIZE=2000, REPEAT_PER_THREAD=5로 복귀)**
+
+| | success | transientConnFail | otherFail | pendingMax | elapsedMs |
+|---|---|---|---|---|---|
+| 세마포어 없음 | 1227 | 773 | 0 | 1991 | 62476 |
+| 세마포어 있음 | 2000 | 0 | 0 | 1 | 12561 |
+
+실패율 39%(773/2000)가 세마포어 적용으로 0%가 됨.
+
+예상외 결과: `elapsedMs`도 세마포어 적용 시 62476ms → 12561ms로 약 5배
+단축됨. 세마포어 없는 쪽은 각 요청이 30초 타임아웃을 기다리다 실패하는
+비용 자체가 컸던 것으로 해석됨(실패가 비용을 증가시킴).
+
+**5. 결론**
+
+- 세마포어 도입으로 실패율 39% → 0%, 총 처리 시간도 오히려 단축.
+- "안전성과 처리량은 트레이드오프"라는 가설이 이 실측에서는 기각됨.
+- `pendingMax` 지표가 예외 건수보다 먼저 위험 신호를 드러낸다는 것도
+  1차 실측에서 확인됨.
+
+### 관련 테스트
+
+- `DbBackpressureLoadTest` — `세마포어_없이_실행` / `세마포어_적용_후_실행`,
+  `LOAD_SIZE`/`REPEAT_PER_THREAD`를 상수로 분리해 부하 조절 가능하도록 구성.
+
+## 가상 스레드 Pinning 실측 (JFR jdk.VirtualThreadPinned)
+
+**배경**: `DbBackpressureLoadTest`(세마포어 없이 가상 스레드 다수가 동시에
+`findById`를 호출하는 부하 테스트)를 돌리는 과정에서, 가상 스레드가
+synchronized 블록 안에서 park되면 캐리어 스레드까지 함께 묶이는 "pinning"
+현상이 실제로 발생하는지 JFR로 검증.
+
+**1. 가설**: pgjdbc(PostgreSQL JDBC 드라이버) 내부 synchronized 블록에서
+가상 스레드 pinning이 발생할 것이다.
+
+**2. 1차 실측 (threshold=20ms, `settings=profile` 기본값)**
+
+`build.gradle`에 `dbBackpressureJfrTest` 태스크를 추가하고
+`-XX:StartFlightRecording=filename=build/pinning.jfr,settings=profile`로
+`세마포어_없이_실행` 테스트를 실행.
+
+- 결과: `jdk.VirtualThreadPinned` **0건**
+- 문제: `profile.jfc`의 `jdk.VirtualThreadPinned` 기본 threshold가 20ms라,
+  이 시점의 0건이 "pinning이 없다"인지 "20ms보다 짧아서 안 걸렸다"인지
+  구분할 수 없었음.
+
+**3. 2차 실측 (threshold=0ms로 낮춤)**
+
+JFR 옵션을 `settings=profile,jdk.VirtualThreadPinned#threshold=0ms`로
+변경해 동일 조건(세마포어 없음)으로 재실행.
+
+- 결과: `jdk.VirtualThreadPinned` **429건** 발생
+  (duration 0.008ms ~ 9ms, 전부 20ms 미만)
+- 확인된 것: 1차에서 0건이 나온 이유는 pinning이 아예 없어서가 아니라,
+  threshold 20ms에 전부 걸러졌기 때문이었음.
+
+**4. 원인 분석 (스택 트레이스)**
+
+`jfr print --events jdk.VirtualThreadPinned --stack-depth 64 build/pinning.jfr`로
+429건의 전체 스택을 확인.
+
+- 429건 전부 동일한 경로였음:
+  `org.hibernate.engine.jdbc.spi.SqlStatementLogger.logStatement()` →
+  `java.io.PrintStream` / `sun.nio.cs.StreamEncoder`(synchronized 메서드) →
+  `LockSupport.park()` → `VirtualThread.parkOnCarrierThread()`
+- `org.postgresql`(pgjdbc) 패키지는 429건의 스택 어디에도 **0회** 등장.
+- 즉 pinning의 유발 지점은 pgjdbc가 아니라, Hibernate가 실행한 SQL을
+  콘솔에 `println`으로 찍는 로깅 경로(JDK `PrintStream`/`StreamEncoder`의
+  synchronized 메서드)였음.
+
+**5. 확정 실측 (SQL 로깅 끄고 재실행)**
+
+`application.yaml`을 확인한 결과 다음 두 설정이 모두 켜져 있었음:
+```yaml
+spring.jpa.show-sql: true                  # line 55
+logging.level.org.hibernate.SQL: DEBUG      # line 193
+```
+이 SQL 로깅이 원인으로 지목되어, `application.yaml`(프로덕션 설정)은
+건드리지 않고 `dbBackpressureJfrTest` 태스크에만 실행 시점 System
+property로 override:
+```
+-Dspring.jpa.show-sql=false
+-Dlogging.level.org.hibernate.SQL=WARN
+```
+threshold=0ms JFR 설정은 그대로 둔 채 `세마포어_없이_실행`을 재실행.
+
+- 결과: `jdk.VirtualThreadPinned` **0건**
+- 결론: SQL 로깅을 끄자 429건이 전부 사라짐 → 원인이 SQL 로깅이었음이
+  확정됨.
+
+**6. 결론 및 실무 시사점**
+
+- pgjdbc 자체는 이번 워크로드(가상 스레드 2000개, `REPEAT_PER_THREAD=5`,
+  세마포어 없음) 범위에서 가상 스레드 pinning을 유발하지 않음이 실측으로
+  확인됨.
+- 실제 pinning 원인은 pgjdbc가 아니라 개발 편의용 SQL 로깅
+  (`show-sql`/`org.hibernate.SQL` DEBUG의 `println` 기반 출력 경로)이었음.
+- 운영 환경에서 SQL 로깅을 끄거나 최소화하는 것은, 기존에는 "로그 양이
+  많아서"라는 이유만 있었다면, 이제 "가상 스레드 pinning을 유발할 수
+  있다"는 근거가 추가됨.
+
+### 관련 태스크
+
+- `build.gradle`의 `dbBackpressureJfrTest` — `DbBackpressureLoadTest` 전용
+  JFR 진단 태스크(임시 진단용, 확인 끝나면 제거 예정). 기본 `test` 태스크에는
+  영향 없음.

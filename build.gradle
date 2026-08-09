@@ -103,3 +103,25 @@ tasks.withType(JavaCompile) {
 tasks.named('test') {
 	useJUnitPlatform()
 }
+
+// DbBackpressureLoadTest 전용 JFR 진단 태스크.
+// jdk.VirtualThreadPinned 이벤트 관찰 목적 (pgjdbc synchronized 블록 pinning 확인).
+// 별도 태스크로 분리해 기본 test 태스크(다른 모든 테스트)에는 영향 없음.
+// 임시 진단용, 확인 끝나면 이 태스크는 제거 예정.
+tasks.register('dbBackpressureJfrTest', Test) {
+	useJUnitPlatform()
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	filter {
+		includeTestsMatching 'com.codescope.infra.config.DbBackpressureLoadTest'
+	}
+	// threshold=0ms: profile.jfc 기본값(20ms)으로는 짧은 pinning이 누락될 수 있어 하향 조정.
+	jvmArgs(
+		'-XX:StartFlightRecording=filename=build/pinning.jfr,settings=profile,jdk.VirtualThreadPinned#threshold=0ms',
+		// application.yaml의 show-sql/org.hibernate.SQL 로깅(println/synchronized 경로)이
+		// pinning 원인의 노이즈였는지 격리하기 위해, 이 태스크 실행 시점에만 System property로
+		// 끈다. application.yaml(프로덕션 설정) 자체는 건드리지 않음.
+		'-Dspring.jpa.show-sql=false',
+		'-Dlogging.level.org.hibernate.SQL=WARN'
+	)
+}
