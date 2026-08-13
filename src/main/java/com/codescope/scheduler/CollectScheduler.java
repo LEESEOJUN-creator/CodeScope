@@ -6,6 +6,7 @@ import com.codescope.kafka.dto.CollectMessage;
 import com.codescope.kafka.producer.CollectProducer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Profile;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -15,12 +16,25 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+// test 프로파일에서는 이 빈 자체를 등록하지 않는다.
+// 왜: @Scheduled(fixedDelay=...)는 initialDelay가 없으면 컨텍스트 기동 직후
+//   즉시 1회 실행된다. 그래서 @SpringBootTest가 뜰 때마다 실제 GitHub API를
+//   호출하고 실제 Kafka에 발행했다 — 로컬에서 유효한 토큰으로 테스트를 돌리면
+//   개발 DB에 실제 수집 데이터가 들어가고, CI에서는 외부 네트워크에 의존하는
+//   테스트가 된다(코드리뷰 E).
+@Profile("!test")
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class CollectScheduler {
 
-    private static final long SEND_TIMEOUT_SECONDS = 5;
+    // 5초 → 3초로 축소.
+    // 왜: 브로커 장애 시 이 스케줄러가 스레드를 붙잡는 최악 시간이
+    //   (건수 × 타임아웃 × 2라운드)로 늘어난다. 30건 기준
+    //   기존 30 × 5초 × 2 = 최대 300초(5분) → 30 × 3초 × 2 = 최대 180초(3분).
+    //   Kafka 발행 정상 응답은 보통 수십~수백 ms라 3초도 충분히 여유롭고,
+    //   "죽은 브로커를 오래 기다리지 않는" 쪽이 이득이 크다(코드리뷰 G).
+    private static final long SEND_TIMEOUT_SECONDS = 3;
 
     private final GithubApiClient githubApiClient;
     private final CollectProducer collectProducer;

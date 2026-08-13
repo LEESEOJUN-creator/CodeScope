@@ -92,7 +92,8 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # contents: write — 이미지 태그를 갱신한 커밋을 되돌려 push하기 위해 필요
+      contents: write
       packages: write
 
     steps:
@@ -125,3 +126,42 @@ jobs:
           tags: ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # GitOps 마무리: 방금 push한 이미지 태그를 매니페스트에 반영한다.
+      # 왜 필요한가: 클러스터가 받아오는 건 GHCR의 이미지이고, 그 안에는
+      #   빌드 시점의 코드가 들어있다. kustomization.yaml의 newTag를 갱신하지
+      #   않으면 코드를 고쳐도 클러스터는 계속 옛 이미지를 쓴다.
+      #   이 스텝이 없으면 매번 손으로 커밋을 하나 더 만들어야 했다(코드리뷰 J).
+      # 왜 [skip ci]인가: 이 push가 다시 CI를 트리거하면
+      #   빌드 → 태그 갱신 → push → 빌드 … 로 무한 루프가 된다.
+      #   GitHub Actions는 커밋 메시지에 [skip ci]가 있으면 워크플로를 건너뛴다.
+      # kustomize 바이너리를 설치하지 않고 sed로 치환하는 이유: 바꿔야 하는 값이
+      #   newTag 한 줄뿐이라, 도구를 하나 더 들이는 비용이 이득보다 크다.
+      - name: Update image tag in kind overlay
+        run: |
+          set -euo pipefail
+          MANIFEST=k8s/overlays/kind/kustomization.yaml
+
+          # newTag 줄만 교체 (들여쓰기 보존)
+          sed -i -E "s|^(\s*newTag:\s*).*|\1${{ github.sha }}|" "$MANIFEST"
+
+          # 실제로 바뀐 게 없으면(동일 SHA 재빌드 등) 빈 커밋을 만들지 않는다
+          if git diff --quiet -- "$MANIFEST"; then
+            echo "이미지 태그에 변경 없음 — 커밋 생략"
+            exit 0
+          fi
+
+          # 치환 결과 검증: 40자 hex SHA가 정확히 들어갔는지 확인.
+          # sed가 조용히 빗나가면 존재하지 않는 태그가 배포되어
+          # ImagePullBackOff로 이어지므로, 여기서 먼저 실패시킨다.
+          if ! grep -qE "^\s*newTag:\s*[0-9a-f]{40}\s*$" "$MANIFEST"; then
+            echo "newTag 치환 실패 — 매니페스트 형식을 확인하세요"
+            cat "$MANIFEST"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$MANIFEST"
+          git commit -m "chore: 배포 이미지 태그를 ${{ github.sha }}로 갱신 [skip ci]"
+          git push origin HEAD:${{ github.ref_name }}

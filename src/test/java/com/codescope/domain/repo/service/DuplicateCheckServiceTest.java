@@ -29,9 +29,15 @@ class DuplicateCheckServiceTest {
     @Autowired
     private DuplicateCheckService duplicateCheckService;
 
+    @Autowired
+    private org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
+
+    // releaseLock()이 제거되어(처리 중 락은 짧은 TTL로 자연 만료시키는 설계로 변경)
+    // 테스트가 남긴 키를 Redis에서 직접 지운다.
     @AfterEach
     void tearDown() {
-        duplicateCheckService.releaseLock(TEST_IDENTIFIER);
+        redisTemplate.delete("lock:processing:" + TEST_IDENTIFIER);
+        redisTemplate.delete("lock:completed:" + TEST_IDENTIFIER);
     }
 
     @Test

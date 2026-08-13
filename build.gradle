@@ -101,7 +101,34 @@ tasks.withType(JavaCompile) {
 }
 
 tasks.named('test') {
-	useJUnitPlatform()
+	// "load" 태그(현재는 DbBackpressureLoadTest)를 기본 test에서 제외한다.
+	// 왜: 이 테스트는 가상 스레드 2000개를 띄우는 부하 테스트로, 과거 실측상
+	//   세마포어 없는 케이스가 62.5초 걸렸다. 모든 PR에서 돌리면 CI가 느려지고
+	//   러너 성능 편차 때문에 결과가 흔들린다(코드리뷰 F).
+	//   부하 테스트는 "필요할 때 의도적으로" 돌리는 것이 맞다.
+	useJUnitPlatform {
+		excludeTags 'load'
+	}
+
+	// test 프로파일을 강제 활성화한다.
+	// 왜: CollectScheduler에 @Profile("!test")를 걸어 테스트 중 스케줄러가
+	//   실제 GitHub API를 호출하는 것을 막았는데(코드리뷰 E), 그 조건이
+	//   걸리려면 test 프로파일이 실제로 켜져 있어야 한다.
+	//   src/test/resources에 application.yml을 새로 두는 방식은
+	//   main의 application.yaml과 로딩 우선순위가 얽혀 혼란스러우므로,
+	//   테스트 실행 시점의 시스템 프로퍼티로 명시하는 쪽을 택했다.
+	systemProperty 'spring.profiles.active', 'test'
+}
+
+// 부하 테스트만 따로 실행하는 태스크: ./gradlew loadTest
+// 기본 test에서 제외했다고 실행 수단까지 없애면 안 되므로 별도 경로를 남겨둔다.
+tasks.register('loadTest', Test) {
+	useJUnitPlatform {
+		includeTags 'load'
+	}
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	systemProperty 'spring.profiles.active', 'test'
 }
 
 // DbBackpressureLoadTest 전용 JFR 진단 태스크.

@@ -70,6 +70,16 @@ public class GithubApiClient {
     //   실제 경로가 깨짐(GitHub가 404 반환) → 경로 세그먼트 2개로 분리해서 전달
     public String fetchReadme(String fullName) {
         String[] parts = fullName.split("/", 2);
+
+        // 왜 명시적으로 검증하는가: 검증 없이 parts[1]에 접근하면 "/"가 없는 값이
+        //   들어왔을 때 ArrayIndexOutOfBoundsException이 난다. 그 예외는 원인이
+        //   드러나지 않아(어떤 값이 잘못됐는지 메시지에 없음) DLT 로그만 보고는
+        //   추적이 어렵다. 어떤 입력이 왜 거부됐는지 메시지에 담아 던진다.
+        if (parts.length < 2 || parts[0].isBlank() || parts[1].isBlank()) {
+            throw new IllegalArgumentException(
+                    "fullName은 'owner/repo' 형식이어야 합니다: " + fullName);
+        }
+
         String owner = parts[0];
         String repo = parts[1];
 
@@ -90,7 +100,17 @@ public class GithubApiClient {
             return;
         }
 
-        int remaining = Integer.parseInt(remainingHeader);
+        // 왜 파싱 실패를 삼키는가: 이 메서드는 관찰용 부가 로직이다.
+        //   GitHub이 예기치 못한 형식의 헤더를 보냈다는 이유로 정상 수집 흐름이
+        //   NumberFormatException으로 죽으면 본말이 전도된다.
+        int remaining;
+        try {
+            remaining = Integer.parseInt(remainingHeader.trim());
+        } catch (NumberFormatException e) {
+            log.debug("{} 헤더를 숫자로 파싱할 수 없음: value={}",
+                    RATE_LIMIT_REMAINING_HEADER, remainingHeader);
+            return;
+        }
 
         if (remaining < RATE_LIMIT_WARN_THRESHOLD) {
             log.warn("GitHub API Rate Limit 임박: remaining={}", remaining);

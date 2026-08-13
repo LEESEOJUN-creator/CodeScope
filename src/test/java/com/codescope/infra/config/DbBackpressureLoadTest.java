@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -52,6 +53,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 세마포어 없는 테스트는 SQLTransientConnectionException을 재현하는 것 자체가
  * 목적이므로, 예외 발생 여부에 대한 assertion은 두지 않는다 (수치는 로그로만 기록).
  */
+// @Tag("load"): 기본 test 태스크에서 제외되고, ./gradlew loadTest 로만 실행된다.
+// 왜: 가상 스레드 2000개를 띄우는 부하 테스트라 실행이 길고(실측 62.5초)
+//   러너 성능에 따라 결과가 흔들려, 매 PR CI에서 돌리기에 적합하지 않다.
+@Tag("load")
 @Slf4j
 @SpringBootTest
 class DbBackpressureLoadTest {

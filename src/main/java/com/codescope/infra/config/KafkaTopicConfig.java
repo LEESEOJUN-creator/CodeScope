@@ -28,14 +28,11 @@ public class KafkaTopicConfig {
                 .build();
     }
 
-    @Bean
-    public NewTopic dltTopic() {
-        // 파티션 1개(전체 순서 보장)로 의도적으로 다르게 설정:
-        // 실패 사례는 병렬 처리량보다 "발생 순서대로 조사"가 더 중요하므로
-        // 파티션을 나누지 않아 메시지 순서가 뒤섞이지 않도록 함
-        return TopicBuilder.name("codescope.dlt")
-                .partitions(1)
-                .replicas(1)
-                .build();
-    }
+    // codescope.dlt 토픽 정의를 제거한 이유:
+    //   @RetryableTopic은 원본 토픽 이름을 기준으로 재시도/DLT 토픽을 자동
+    //   생성한다(codescope.collect-retry-0, codescope.collect-dlt 등).
+    //   수동으로 만든 단일 codescope.dlt는 이 명명 규칙과 달라 실제로는
+    //   어디에도 연결되지 않는 죽은 토픽이었다.
+    //   토픽별로 DLT가 나뉘면 "어느 단계에서 실패했는지"가 토픽 이름만으로
+    //   구분되어 오히려 조사에 유리하므로, @RetryableTopic 방식으로 통일한다.
 }
