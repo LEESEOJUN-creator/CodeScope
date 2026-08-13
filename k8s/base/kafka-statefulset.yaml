@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  labels:
+    app: kafka
+spec:
+  serviceName: kafka-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+        - name: kafka
+          # bitnami/kafka는 정책 변경으로 3.7 태그가 유료 전용으로 전환되어
+          # (docker.io/bitnami/kafka:3.7: not found) apache 공식 이미지로 교체
+          image: apache/kafka:3.9.0
+          ports:
+            - containerPort: 9092
+              name: plaintext
+            - containerPort: 9093
+              name: controller
+            - containerPort: 9094
+              name: external
+          env:
+            # Zookeeper 없이 KRaft(Kafka Raft) 모드로 단일 브로커가
+            # broker 역할과 controller(메타데이터 쿼럼) 역할을 겸함
+            # (apache/kafka 공식 이미지는 KRaft가 기본값이라 별도 활성화 env 불필요)
+            # CLUSTER_ID는 임의 문자열 불가 — kafka-storage.sh format이 16바이트 UUID를
+            # base64(URL-safe, 패딩 없음) 인코딩한 22자 포맷인지 검증하므로,
+            # 해당 형식이 아니면 컨테이너가 기동 단계에서 바로 실패함
+            - name: CLUSTER_ID
+              value: "BeihAqlVZU-twOg7RXkMWg"
+            - name: KAFKA_PROCESS_ROLES
+              value: "broker,controller"
+            - name: KAFKA_NODE_ID
+              value: "0"
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: "CONTROLLER"
+            # EXTERNAL(9094) 추가: 클러스터 밖(IntelliJ에서 직접 띄운 로컬
+            # Spring Boot)에서 kafka-0.kafka-headless DNS를 해석 못 해
+            # ConfigException: No resolvable bootstrap urls로 실패하던 문제 해결.
+            # PLAINTEXT(9092)는 클러스터 내부 Pod 전용으로 그대로 유지
+            - name: KAFKA_LISTENERS
+              value: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094"
+            # 고정 Pod DNS(headless service)를 광고 주소로 사용해야
+            # 클러스터 내 다른 Pod(Spring Boot Consumer/Producer)가
+            # 재시작 후에도 동일한 주소로 접속 가능
+            # EXTERNAL은 로컬 PC 기준 주소(localhost)로 광고 — 로컬에서
+            # kubectl port-forward svc/kafka-headless 9094:9094로 접근할 예정
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://kafka-0.kafka-headless:9092,EXTERNAL://localhost:9094"
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT"
+            # 브로커 간 통신(replication 등)은 기존 PLAINTEXT 리스너 유지 —
+            # EXTERNAL은 로컬 접근 전용이라 브로커 간 통신에 쓰면 안 됨
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: "PLAINTEXT"
+            # replicas: 1 → 쿼럼 투표자가 자기 자신 하나뿐
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: "0@kafka-0.kafka-headless:9093"
+            # __consumer_offsets 내부 토픽의 기본 replication factor(3)가
+            # 브로커 수(1)보다 커서 토픽 자체가 생성되지 못해 컨슈머 그룹
+            # 커밋/조회(--from-beginning 등)가 전부 실패하는 문제 확인
+            # (kafka-topics.sh --describe: "does not exist as expected")
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+          # OOMKilled 실측 근거 (kubectl describe pod kafka-0):
+          #   Last State: Terminated, Reason: OOMKilled, Exit Code: 137
+          #   Started 12:41:57 → Finished 12:56:35 (약 15분 만에 메모리 초과)
+          #   기존 requests/limits memory 256Mi/512Mi로는 KRaft 브로커+컨트롤러
+          #   겸용 JVM 프로세스를 감당 못 해 상향 조정
+          resources:
+            requests:
+              cpu: 500m
+              memory: 768Mi
+            limits:
+              cpu: 1000m
+              memory: 1.5Gi
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
+  volumeClaimTemplates:
+    # emptyDir이 아닌 PVC를 쓰는 이유: Kafka는 토픽 로그 세그먼트를
+    # 디스크에 영속시켜야 하는 메시지 브로커라, Pod 재스케줄 시
+    # 오프셋/데이터가 사라지면 Consumer 재처리 로직이 깨짐
+    - metadata:
+        name: kafka-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

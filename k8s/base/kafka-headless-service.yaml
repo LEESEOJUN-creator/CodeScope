@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-headless
+spec:
+  clusterIP: None
+  selector:
+    app: kafka
+  ports:
+    - port: 9092
+      targetPort: 9092
+      name: plaintext
+    - port: 9094
+      targetPort: 9094
+      name: external
+# Headless Service: StatefulSet Pod마다 고정된 DNS(kafka-0.kafka-headless)를
+# 부여하기 위함. KRaft controller.quorum.voters, advertised.listeners가
+# 이 고정 DNS를 참조하므로 일반 ClusterIP(가상 IP, 로드밸런싱)로는 대체 불가.

@@ -7,3 +7,5 @@ resources:
   - redis-configmap.yaml
   - redis-deployment.yaml
   - redis-service.yaml
+  - kafka-statefulset.yaml
+  - kafka-headless-service.yaml
