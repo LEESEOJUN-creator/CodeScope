@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # 이 프로젝트의 테스트 상당수(@SpringBootTest, @DataJpaTest에
+    # replace=NONE)가 실제 PostgreSQL/Redis 연결을 요구해서(H2 등 임베디드
+    # DB 미사용), CI 러너에 동일한 인프라를 서비스 컨테이너로 띄워야 함.
+    # Kafka는 이 시점 기준으로 실제 브로커 연결을 필요로 하는 테스트가
+    # 없어(CollectConsumerTest는 순수 Mockito 단위 테스트) 서비스로 추가하지
+    # 않음 — @SpringBootTest 컨텍스트가 뜰 때 Kafka 연결은 비동기/지연
+    # 방식이라 브로커가 없어도 컨텍스트 기동 자체는 실패하지 않음
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: codescope
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # application.yaml이 기본값 없이 요구하는 값들(누락 시 컨텍스트 기동
+      # 자체가 실패). 실제 GitHub OAuth/서명에 쓰이지 않는 CI 전용 더미값.
+      # JWT_SECRET은 HS256 최소 요구사항(256bit)을 충족하는 Base64
+      # 문자열이어야 해서, 디코딩 가능한 값으로 지정
+      GITHUB_CLIENT_ID: ci-dummy-client-id
+      GITHUB_CLIENT_SECRET: ci-dummy-client-secret
+      JWT_SECRET: Y29kZXNjb3BlLWNpLWR1bW15LWp3dC1zZWNyZXQta2V5LTMyYnl0ZXMh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # Day 21 CollectConsumerTest를 포함한 전체 테스트 스위트 실행
+      - name: Run tests
+        run: ./gradlew test --no-daemon
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: build/reports/tests/test
+
+  build-and-push:
+    # main에 실제로 push(머지)된 경우에만 이미지를 빌드해 push.
+    # PR 단계에서는 아직 배포 후보가 아니므로 이미지가 필요 없음
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # GHCR은 이미지 경로가 소문자여야 하는데 github.repository_owner /
+      # github.repository는 저장소 소유자 표기 그대로("LEESEOJUN-creator")라
+      # 대문자가 섞여 있을 수 있어 별도로 소문자화
+      - name: Compute lowercase image name
+        run: echo "IMAGE_NAME=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 왜 커밋 SHA 태그인가: latest를 덮어쓰면 어느 버전이 배포됐는지
+      # 추적 불가, 롤백도 이전 SHA로 재배포하면 되니 명확함
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

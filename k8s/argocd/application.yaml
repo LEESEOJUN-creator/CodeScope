@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: codescope
+  namespace: argocd
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/LEESEOJUN-creator/CodeScope.git
+    targetRevision: main
+    path: k8s/overlays/kind
+
+  destination:
+    # 로컬 kind 클러스터 자체(별도 원격 클러스터 등록 없이, ArgoCD가
+    # 설치된 클러스터와 배포 대상 클러스터가 동일)
+    server: https://kubernetes.default.svc
+    # 지금까지 postgres/redis/kafka가 실제로 배포되어 있는 네임스페이스와
+    # 맞춤 (k8s 매니페스트 자체엔 namespace가 명시되어 있지 않아, 이 값이
+    # 실제 적용 네임스페이스를 결정함)
+    namespace: default
+
+  syncPolicy:
+    automated:
+      # prune: Git에서 삭제된 리소스는 클러스터에서도 자동 삭제
+      #   → 수동으로 kubectl delete 안 해도 Git이 단일 진실 소스가 됨
+      # selfHeal: 클러스터 상태가 Git과 어긋나면(예: kubectl edit로 직접 수정)
+      #   자동으로 Git 상태로 되돌림 → 클러스터를 직접 만지는 습관 자체를 차단
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # 네임스페이스가 미리 없을 수 있는 로컬 kind 환경 대비
+      - CreateNamespace=true

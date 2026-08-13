@@ -1,0 +1,13 @@
+# Dockerfile이 COPY하는 대상은 gradlew/gradle/build.gradle/settings.gradle/src뿐이라,
+# 그 외 대용량/불필요 디렉터리를 빌드 컨텍스트에서 제외해 빌드 속도를 높임
+# (COPY 대상이 아니어도 .dockerignore가 없으면 컨텍스트 전송 자체에는 포함됨)
+.git/
+.gradle/
+build/
+.idea/
+*.iml
+k8s/
+docs/
+.github/
+*.md
+.env
