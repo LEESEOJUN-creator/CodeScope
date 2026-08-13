@@ -7,3 +7,14 @@ resources:
 patches:
   - path: patch-resources.yaml
   - path: redis-config-patch.yaml
+
+# base의 codescope-deployment.yaml은 :latest placeholder를 참조하는데,
+# 실제로 GHCR에 push된 태그는 커밋 SHA뿐이라(latest 태그는 별도로 만들지
+# 않음 — ci.yml이 의도한 대로 SHA 태그만 push), :latest 그대로 배포하면
+# ImagePullBackOff(not found)가 발생함. 이 overlay 단계에서 실제 존재하는
+# SHA 태그로 덮어써서 base는 손대지 않고 오버레이만으로 해결.
+# 새 이미지가 올라갈 때마다 이 값을 갱신해야 함(현재는 수동, 추후 CI 마지막
+# 단계에서 `kustomize edit set image` + git push로 자동화 예정)
+images:
+  - name: ghcr.io/leeseojun-creator/codescope
+    newTag: 39f48780d87dcac9b4edbce1cec95ec4218c9a5e
