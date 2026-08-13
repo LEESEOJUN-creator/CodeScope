@@ -1,5 +1,22 @@
 # Troubleshooting
 
+## 목차
+
+- [N+1 문제 재현 및 해결 (Fetch Join)](#n1-문제-재현-및-해결-fetch-join)
+- [동적 검색 조건 처리 및 컬렉션 fetch 전략](#동적-검색-조건-처리-및-컬렉션-fetch-전략)
+- [Flyway 마이그레이션 도입](#flyway-마이그레이션-도입)
+- [Redis 도입 (트렌드 랭킹 + 중복 수집 방지)](#redis-도입-트렌드-랭킹--중복-수집-방지)
+- [GitHub OAuth + JWT + Redis Refresh Token Rotation](#github-oauth--jwt--redis-refresh-token-rotation)
+- [DB 세마포어 배압 제어 실측](#db-세마포어-배압-제어-실측)
+- [가상 스레드 Pinning 실측 (JFR jdk.VirtualThreadPinned)](#가상-스레드-pinning-실측-jfr-jdkvirtualthreadpinned)
+- [Kafka 파이프라인 인프라·연동 트러블슈팅 (Day 18-21)](#kafka-파이프라인-인프라연동-트러블슈팅-day-18-21)
+  1. [bitnami/kafka Docker Hub 정책 변경으로 인한 ImagePullBackOff](#1-bitnamikafka-docker-hub-정책-변경으로-인한-imagepullbackoff)
+  2. [Kafka 브로커 OOMKilled (메모리 512Mi 부족)](#2-kafka-브로커-oomkilled-메모리-512mi-부족)
+  3. [`__consumer_offsets` 내부 토픽 replication factor 불일치](#3-__consumer_offsets-내부-토픽-replication-factor-불일치)
+  4. [로컬 개발 환경에서 K8s 내부 Kafka 접근 시 advertised.listeners DNS 해석 실패](#4-로컬-개발-환경에서-k8s-내부-kafka-접근-시-advertisedlisteners-dns-해석-실패)
+  5. [GitHub Personal Access Token 만료로 인한 401 Bad Credentials](#5-github-personal-access-token-만료로-인한-401-bad-credentials)
+  6. [Kafka 컨슈머 커밋 로직의 finally 블록 오류](#6-kafka-컨슈머-커밋-로직의-finally-블록-오류)
+
 ## N+1 문제 재현 및 해결 (Fetch Join)
 
 **문제**: GithubRepository-Topic이 @ManyToMany LAZY 관계로 설계되어 있어,
@@ -616,3 +633,188 @@ threshold=0ms JFR 설정은 그대로 둔 채 `세마포어_없이_실행`을 �
 - `build.gradle`의 `dbBackpressureJfrTest` — `DbBackpressureLoadTest` 전용
   JFR 진단 태스크(임시 진단용, 확인 끝나면 제거 예정). 기본 `test` 태스크에는
   영향 없음.
+
+## Kafka 파이프라인 인프라·연동 트러블슈팅 (Day 18-21)
+
+k8s(kind) 위에 Kafka를 직접 올려 로컬 개발 환경에서 붙이는 과정부터,
+`GithubApiClient` → `CollectProducer` → `CollectConsumer` → `EmbedProducer`로
+이어지는 수집 파이프라인을 구현하며 실제로 실행해 확인한 문제 6건을 기록한다.
+(코드 리뷰/설정 검토 단계에서만 다룬, 실행으로 검증하지 않은 이슈는 이
+문서에 포함하지 않는다.)
+
+### 1. bitnami/kafka Docker Hub 정책 변경으로 인한 ImagePullBackOff
+
+**증상**: Kafka StatefulSet 배포 시 `ImagePullBackOff` 발생.
+`kubectl describe pod` 결과:
+```
+docker.io/bitnami/kafka:3.7: not found
+```
+
+**진단 과정**: `kubectl describe pod kafka-0`으로 이벤트 로그 확인 →
+이미지 태그 자체가 레지스트리에서 사라진 상태임을 확인. Docker Hub에서
+`bitnami/kafka` 태그 목록을 직접 조회해 해당 버전이 더 이상 무료 태그로
+제공되지 않음을 확인.
+
+**원인**: bitnami가 Docker Hub 무료 배포 정책을 변경해 특정 버전 태그가
+제거됨(유료 Bitnami Secure Images 전용으로 전환).
+
+**해결**: `apache/kafka` 공식 이미지로 교체. bitnami 전용 환경변수
+(`KAFKA_ENABLE_KRAFT`, `ALLOW_PLAINTEXT_LISTENER` 등 `KAFKA_CFG_*` 접두사
+네이밍)를 제거하고, 공식 이미지의 네이밍(`KAFKA_PROCESS_ROLES`,
+`KAFKA_NODE_ID` 등)으로 StatefulSet 매니페스트를 다시 작성.
+
+**교훈**: 서드파티(비공식) 컨테이너 이미지는 배포 정책이 회사 사정에 따라
+예고 없이 바뀔 수 있으므로, 인프라 핵심 컴포넌트는 가능하면 공식 이미지를
+우선 채택하는 게 장기적으로 안전하다.
+
+### 2. Kafka 브로커 OOMKilled (메모리 512Mi 부족)
+
+**증상**: Kafka Pod가 정상 기동 후 약 15분 뒤 재시작됨.
+`kubectl describe pod` 결과:
+```
+Last State: Terminated
+Reason: OOMKilled
+Exit Code: 137
+```
+
+**진단 과정**: `kubectl describe pod`로 종료 사유 확인 → `Reason: OOMKilled`,
+`Exit Code: 137`(SIGKILL, 메모리 초과로 커널이 강제 종료했다는 신호)로
+메모리 부족임을 특정.
+
+**원인**: 메모리 `limit: 512Mi`가 JVM 기반 Kafka(KRaft 브로커+컨트롤러
+겸용, 단일 노드라 두 역할을 한 프로세스가 겸함)의 힙+메타스페이스+
+JVM 오버헤드를 감당하기엔 부족했음.
+
+**해결**: `requests`/`limits`를 각각 `768Mi`/`1.5Gi`로 증설. 증설 직후
+바로 정상 판단하지 않고 **20분 이상 관찰**해 OOMKilled 재발이 없음을
+실측 확인.
+
+**교훈**: 리소스 부족으로 인한 재시작은 기동 직후엔 안 보이다가 일정
+시간 뒤에 터지는 경우가 있으므로("정상 기동 후 15분"), limit 증설 후에도
+곧바로 "해결됨"이라 판단하지 말고 최소 관찰 시간을 두고 재발 여부를
+확인해야 한다.
+
+### 3. `__consumer_offsets` 내부 토픽 replication factor 불일치
+
+**증상**: 컨슈머 그룹 기반 조회(`--from-beginning`)는 실패하는데,
+파티션을 직접 지정한 조회(`--partition --offset`)는 성공하는 비대칭
+현상 발생.
+
+**진단 과정**: `kafka-topics.sh --describe --topic __consumer_offsets` 실행 →
+```
+Topic 'Optional[__consumer_offsets]' does not exist as expected
+```
+내부 토픽 자체가 생성되지 않았음을 확인.
+
+**원인**: 내부 토픽 `__consumer_offsets`의 기본 replication factor가
+3인데, 브로커가 1대뿐이라 auto-create가 조건을 충족하지 못해 실패.
+
+**해결**: `KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1` 환경변수를 브로커
+설정에 추가.
+
+**교훈**: 단일 브로커 로컬/개발 환경에서는 Kafka 내부 토픽들의 기본
+replication factor(보통 3)를 명시적으로 낮춰줘야 하며, 이 설정을
+누락하면 컨슈머 그룹 오프셋 커밋처럼 내부 토픽에 의존하는 기능만
+조용히 실패해 원인 추적이 까다롭다.
+
+### 4. 로컬 개발 환경에서 K8s 내부 Kafka 접근 시 advertised.listeners DNS 해석 실패
+
+**증상**: 로컬 PC(IntelliJ)에서 Spring Boot 앱 실행 시
+```
+Couldn't resolve server kafka-0.kafka-headless:9092 ... DNS resolution failed
+```
+
+**진단 과정**: `kubectl port-forward svc/kafka-headless 9092:9092`로 최초
+연결까지는 되는데 이후 재접속에서 계속 실패하는 패턴을 확인 → 브로커가
+클라이언트에게 재접속용으로 돌려주는 `advertised.listeners` 값 자체가
+클러스터 내부 DNS라는 점을 의심.
+
+**원인**: `advertised.listeners`가 클러스터 내부 DNS
+(`kafka-0.kafka-headless`)만 가리켜서, port-forward로 최초 연결은 되어도
+브로커가 재접속 주소로 그 내부 DNS를 다시 알려주는 순간 로컬 PC에서는
+해석 불가.
+
+**해결**: `EXTERNAL` 리스너(포트 9094)를 브로커에 추가로 열어, 클러스터
+내부 Pod용(`PLAINTEXT`, `kafka-0.kafka-headless:9092`)과 로컬 개발용
+(`EXTERNAL`, `localhost:9094`)을 리스너 단위로 분리.
+`kubectl port-forward svc/kafka-headless 9094:9094`로 로컬 접근 경로 확보.
+`application.yaml`의 `spring.kafka.bootstrap-servers`도 로컬 실행 시엔
+`localhost:9094`를 사용하도록 설정.
+
+**교훈**: Kafka는 최초 연결 성공 여부만으로는 안심할 수 없다 —
+`advertised.listeners`가 실제로 클라이언트가 도달 가능한 주소인지가
+핵심이며, 클러스터 내부/외부 클라이언트가 공존하는 환경에서는 리스너를
+용도별로 분리하는 것이 정석이다.
+
+### 5. GitHub Personal Access Token 만료로 인한 401 Bad Credentials
+
+**증상**: `GithubApiClient.searchTrending()` 호출 시
+```
+401 Unauthorized - "Bad credentials"
+```
+
+**진단 과정**: 요청 헤더의 `Authorization` 값이 실제로 전달되는지부터
+확인(전달은 정상) → GitHub 웹의 Settings > Developer settings >
+Personal access tokens에서 해당 토큰 상태를 직접 조회해 "Expired on ..."
+문구 확인.
+
+**원인**: `application.yaml`의 `${GITHUB_TOKEN}` 참조값이 실제로는 과거에
+발급한 개인 토큰이었고, 해당 토큰이 만료됨.
+
+**해결**: GitHub Fine-grained Personal Access Token을 최소 권한
+(Public Repositories, read-only)으로 새로 발급. IntelliJ Run Configuration의
+Environment Variables에 `GITHUB_TOKEN`으로 등록(`application.yaml`에 직접
+값을 기재하지 않고, git 커밋 대상에서도 제외).
+
+**교훈**: 인증 실패(401)는 코드 버그가 아니라 자격 증명 자체의 문제일 수
+있으므로, 헤더 전달 여부를 먼저 확인한 뒤에는 발급처(GitHub) 화면에서
+토큰 상태를 직접 확인하는 것이 코드를 파고드는 것보다 빠른 경우가 많다.
+
+### 6. Kafka 컨슈머 커밋 로직의 finally 블록 오류
+
+**증상**: 실측 재현은 하지 않았으나, 코드 리뷰 중 `CollectConsumer`의
+`ack.acknowledge()`가 `finally` 블록에 있어 `DataIntegrityViolationException`이
+아닌 다른 예외(DB 연결 실패 등)에서도 무조건 커밋되는 구조적 결함을 발견.
+
+**진단 과정**: `try { ... } catch (DataIntegrityViolationException e) { ... }
+finally { ack.acknowledge(); }` 구조를 코드 리뷰로 검토 → `finally`는
+예외 종류와 무관하게 항상 실행된다는 점에서, "성공"과 "재시도가 필요한
+실패"를 구분하지 못하고 둘 다 커밋해버리는 경로를 확인.
+
+**원인**: `finally`는 어떤 예외가 발생하든 무조건 실행되므로, DB unique
+제약 위반(정상적인 멱등 스킵)과 DB 연결 실패 같은 진짜 재시도가 필요한
+예외를 구분하지 않고 똑같이 커밋해버림. 커밋되면 Kafka는 "처리 완료"로
+인식해 재전달하지 않으므로, 진짜 실패 케이스에서 메시지가 조용히
+유실된다.
+
+**해결**: `finally` 제거. `ack.acknowledge()`를 성공 경로(`save()` 직후)와
+`DataIntegrityViolationException` catch 경로 두 곳에만 명시적으로 배치.
+그 외 예외는 catch하지 않고 그대로 던져서, 커밋 없이 Kafka 재전달을
+유도하도록 변경.
+
+```diff
+             githubRepositoryJpaRepository.save(repository);
+             log.info("레포 저장 완료: fullName={}", message.fullName());
++            ack.acknowledge();
+         } catch (DataIntegrityViolationException e) {
+             log.info("DB 레벨 중복 감지, 스킵: fullName={}", message.fullName());
+-        } finally {
+-            ack.acknowledge();
++            ack.acknowledge();
+         }
++        // 그 외 예외(DB 연결 실패 등)는 여기서 잡지 않고 그대로 던진다.
++        // ack.acknowledge()를 호출하지 않아야 커밋이 안 되고, Kafka가 재전달한다.
+```
+
+**교훈**: `try-finally`로 리소스 정리를 하듯 커밋을 처리하면, "성공"과
+"의도적으로 성공 취급하는 특정 실패"와 "진짜 재시도가 필요한 실패"라는
+세 가지 경로를 하나로 뭉개버리게 된다. 커밋(ack)처럼 결과에 따라 동작이
+달라져야 하는 로직은 finally가 아니라 각 경로에서 명시적으로 처리해야
+한다.
+
+### 관련 파일
+
+- `k8s/base/kafka-statefulset.yaml`, `k8s/base/kafka-headless-service.yaml`
+  — 이슈 1~4 관련 최종 매니페스트
+- `src/main/java/com/codescope/infra/github/GithubApiClient.java` — 이슈 5
+- `src/main/java/com/codescope/kafka/consumer/CollectConsumer.java` — 이슈 6
