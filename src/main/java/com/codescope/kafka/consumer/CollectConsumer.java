@@ -110,12 +110,23 @@ public class CollectConsumer {
             log.info("DB 레벨 중복 감지, 완료 처리: fullName={}", fullName);
             duplicateCheckService.markCompleted(fullName);
             ack.acknowledge();
+
+        } catch (Exception e) {
+            // 7. 그 외 예외(DB 연결 실패 등): 완료 표식을 남기지 않고,
+            //    처리 중 락을 "즉시" 풀어준 뒤 예외를 그대로 다시 던진다.
+            //
+            //    왜 TTL 만료를 기다리지 않고 직접 푸는가:
+            //    @RetryableTopic의 재시도는 1초 → 2초 뒤에 오는데 처리 중 락의
+            //    TTL은 1분이다. 락이 자연 만료되기를 기다리면 모든 재시도가
+            //    tryLock()에서 막혀, 저장을 한 번도 재시도하지 못한 채 DLT로
+            //    직행한다(코드리뷰 K). 여기서 풀어야 재시도가 실제로 동작한다.
+            //
+            //    ack하지 않으므로 @RetryableTopic이 retry 토픽으로 넘겨 재시도하고,
+            //    3회를 모두 소진하면 DLT에 보존되어 사후 추적이 가능하다.
+            //    ← 이 지점이 코드리뷰 A(락 미해제로 인한 메시지 유실)의 핵심 해결점.
+            duplicateCheckService.releaseLock(fullName);
+            throw e;
         }
-        // 7. 그 외 예외(DB 연결 실패 등)는 잡지 않고 그대로 던진다.
-        //    markCompleted()를 호출하지 않으므로 완료 표식이 남지 않고,
-        //    처리 중 락도 1분 뒤 자연 만료되어 재시도가 가능해진다.
-        //    ack하지 않으므로 @RetryableTopic이 retry 토픽으로 넘겨 재시도한다.
-        //    ← 이 지점이 코드리뷰 A(락 미해제로 인한 메시지 유실)의 핵심 해결점.
     }
 
     @DltHandler

@@ -74,17 +74,34 @@ spec:
                 secretKeyRef:
                   name: codescope-secrets
                   key: JWT_SECRET
+          # startupProbe: 기동이 끝날 때까지 liveness/readiness 판정을 유보한다.
+          # 왜 추가했는가: @RetryableTopic 도입으로 retry/DLT 리스너 컨테이너가
+          #   추가 생성되면서 기동 시간이 늘어, liveness initialDelay(60초)를
+          #   넘겨 "아직 뜨는 중"인 앱이 계속 강제 종료됐다(Exit Code 137,
+          #   probe 로그는 connection refused).
+          #   initialDelay를 늘리는 방법도 있지만, 그러면 기동 후 진짜 행이
+          #   걸렸을 때 감지도 그만큼 늦어진다. startupProbe는 기동에만 넉넉한
+          #   예산(최대 10초 × 30 = 300초)을 주고, 기동이 끝나면 liveness가
+          #   짧은 주기로 감시하도록 역할을 분리해준다.
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 30
           # 왜 /actuator/health인가: management.endpoints.web.exposure.include에
-          # health가 이미 노출되어 있어 별도 설정 추가 없이 바로 사용 가능
+          # health가 이미 노출되어 있고, SecurityConfig에서 permitAll로 열어둠
+          # (인증을 요구하면 probe가 401을 받아 실패로 판정된다)
+          # startupProbe가 성공할 때까지 아래 두 probe는 아예 동작하지 않으므로
+          # initialDelaySeconds는 더 이상 필요 없어 제거했다(기동 유예는
+          # startupProbe가 전담).
           readinessProbe:
             httpGet:
               path: /actuator/health
               port: 8080
-            initialDelaySeconds: 30
             periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /actuator/health
               port: 8080
-            initialDelaySeconds: 60
             periodSeconds: 20

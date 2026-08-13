@@ -83,6 +83,14 @@ dependencies {
 	// Test
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testImplementation 'org.springframework.kafka:spring-kafka-test'
+
+	// Testcontainers: @DataJpaTest가 실제 개발/운영 PostgreSQL 대신
+	// 테스트 전용 컨테이너를 쓰도록 하기 위함.
+	// 왜 필요해졌는가: 수집 파이프라인이 돌기 시작하면서 로컬 테스트가 붙던
+	//   PostgreSQL에 실제 GitHub 레포 데이터가 쌓였고, "픽스처만 있다"고
+	//   가정하고 개수를 단언하던 테스트들이 깨졌다(expected: 3L but was: 34L).
+	testImplementation 'org.testcontainers:postgresql'
+	testImplementation 'org.testcontainers:junit-jupiter'
 	testImplementation 'io.projectreactor:reactor-test'
 	testCompileOnly 'org.projectlombok:lombok'
 	testAnnotationProcessor 'org.projectlombok:lombok'

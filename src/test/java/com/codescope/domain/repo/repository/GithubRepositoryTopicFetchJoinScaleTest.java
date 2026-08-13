@@ -1,5 +1,6 @@
 package com.codescope.domain.repo.repository;
 
+import com.codescope.support.PostgresTestContainer;
 import com.codescope.domain.repo.entity.GithubRepository;
 import com.codescope.domain.repo.entity.Topic;
 import jakarta.persistence.EntityManager;
@@ -7,7 +8,6 @@ import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 
 import java.util.ArrayList;
@@ -22,8 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * findAllWithTopics()로 N+1 문제가 해결되는지 확인
  */
 @DataJpaTest
-@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-class GithubRepositoryTopicFetchJoinScaleTest {
+class GithubRepositoryTopicFetchJoinScaleTest extends PostgresTestContainer {
 
     @Autowired
     private GithubRepositoryJpaRepository githubRepositoryJpaRepository;

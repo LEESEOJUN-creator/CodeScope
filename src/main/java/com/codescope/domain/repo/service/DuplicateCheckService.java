@@ -60,6 +60,26 @@ public class DuplicateCheckService {
     }
 
     /**
+     * 처리 중 락을 즉시 해제한다. 처리에 실패했을 때 호출한다.
+     *
+     * 왜 TTL 만료를 기다리지 않고 명시적으로 푸는가:
+     *   @RetryableTopic의 재시도 간격은 1초 → 2초인데 PROCESSING_TTL은 1분이다.
+     *   TTL 만료만 믿으면 재시도가 도착하는 모든 시점(1초/2초 후)에 락이 아직
+     *   살아있어 tryLock()이 false를 반환하고, 저장은 한 번도 못 해본 채
+     *   DLT로 넘어간다. 실패 즉시 락을 풀어야 재시도가 실제로 저장을 재시도한다.
+     *
+     * TTL(1분)은 이제 "락을 푸는 정상 경로"가 아니라, 프로세스가 갑자기 죽어
+     * 이 호출 자체를 못 했을 때를 대비한 안전망 역할만 한다.
+     *
+     * 이름을 identifier 하나만 받도록 유지한 이유: 호출부가 "processing:"
+     * 같은 키 접두사를 알아야 하면 Redis 키 구조가 서비스 밖으로 새어나가,
+     * 나중에 키 이름을 바꿀 때 호출부까지 전부 고쳐야 한다.
+     */
+    public void releaseLock(String identifier) {
+        redisTemplate.delete(PROCESSING_KEY_PREFIX + identifier);
+    }
+
+    /**
      * 처리에 성공했을 때만 호출한다.
      * 실패 시에는 호출하지 않아야 다음 주기/재전달에서 다시 처리될 수 있다.
      */

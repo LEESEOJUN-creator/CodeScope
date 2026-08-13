@@ -149,8 +149,8 @@ class CollectConsumerTest {
     }
 
     @Test
-    @DisplayName("그 외 예외(DB 장애 등)는 완료 표식도 ack도 하지 않고 그대로 던져 재시도에 맡긴다")
-    void consume_일시적_장애는_커밋_없이_전파() {
+    @DisplayName("그 외 예외(DB 장애 등)는 처리 중 락을 즉시 풀고, 완료 표식도 ack도 없이 예외를 전파한다")
+    void consume_일시적_장애는_락_해제_후_커밋_없이_전파() {
         // given
         given(duplicateCheckService.isRecentlyCompleted(FULL_NAME)).willReturn(false);
         given(duplicateCheckService.tryLock(FULL_NAME)).willReturn(true);
@@ -164,11 +164,31 @@ class CollectConsumerTest {
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("DB 커넥션 실패");
 
-        // 핵심 회귀 방지: 완료 표식이 남으면 다음 시도가 영영 스킵되고,
+        // 핵심 회귀 방지 1: 처리 중 락을 즉시 풀지 않으면, 1~2초 뒤 도착하는
+        // 재시도가 TTL 1분짜리 락에 막혀 저장을 재시도하지 못하고 DLT로 직행한다
+        verify(duplicateCheckService).releaseLock(FULL_NAME);
+
+        // 핵심 회귀 방지 2: 완료 표식이 남으면 다음 시도가 영영 스킵되고,
         // ack하면 저장되지 않은 메시지가 커밋되어 유실된다
         verify(duplicateCheckService, never()).markCompleted(any());
         verify(ack, never()).acknowledge();
         verify(embedProducer, never()).publish(any());
+    }
+
+    @Test
+    @DisplayName("정상 처리 경로에서는 처리 중 락을 해제하지 않는다(완료 표식이 중복 유입을 막는 역할)")
+    void consume_성공_시에는_락_해제_안_함() {
+        // given
+        given(duplicateCheckService.isRecentlyCompleted(FULL_NAME)).willReturn(false);
+        given(duplicateCheckService.tryLock(FULL_NAME)).willReturn(true);
+        given(githubRepositoryJpaRepository.findByFullName(FULL_NAME))
+                .willReturn(Optional.empty());
+
+        // when
+        collectConsumer.consume(createMessage(), ack);
+
+        // then
+        verify(duplicateCheckService, never()).releaseLock(any());
     }
 
     private CollectMessage createMessage() {

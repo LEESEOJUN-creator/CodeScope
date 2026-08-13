@@ -1,5 +1,6 @@
 package com.codescope.domain.repo.repository;
 
+import com.codescope.support.PostgresTestContainer;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
@@ -12,7 +13,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.Page;
@@ -39,9 +39,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   클래스를 분리해도 컨텍스트 재기동 비용은 없음
  */
 @DataJpaTest
-@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({QuerydslConfig.class, GithubRepositoryQueryRepository.class})
-class GithubRepositoryQueryRepositoryPaginationTest {
+class GithubRepositoryQueryRepositoryPaginationTest extends PostgresTestContainer {
 
     private static final org.slf4j.Logger log =
             LoggerFactory.getLogger(GithubRepositoryQueryRepositoryPaginationTest.class);
