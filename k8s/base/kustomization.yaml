@@ -9,3 +9,5 @@ resources:
   - redis-service.yaml
   - kafka-statefulset.yaml
   - kafka-headless-service.yaml
+  - codescope-deployment.yaml
+  - codescope-service.yaml

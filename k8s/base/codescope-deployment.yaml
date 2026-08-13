@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codescope
+  labels:
+    app: codescope
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: codescope
+  template:
+    metadata:
+      labels:
+        app: codescope
+    spec:
+      containers:
+        - name: codescope
+          # :latest는 base의 placeholder. 실제 배포 시점엔 CI/CD가 이 overlay에서
+          #   kustomize edit set image ghcr.io/leeseojun-creator/codescope=ghcr.io/leeseojun-creator/codescope:<커밋SHA>
+          # 를 실행해 커밋 SHA 태그로 교체한 뒤 적용함 (SHA 태그를 쓰는 이유는
+          # ci.yml/troubleshooting 문서 참고: latest 덮어쓰기로는 어느 버전이
+          # 배포됐는지 추적 불가, 롤백도 이전 SHA로 재배포하면 되니 명확함)
+          # imagePullPolicy를 명시하지 않은 이유: :latest 태그일 때 K8s 기본값은
+          # Always(매번 재확인), 실제 배포되는 SHA 태그일 때 기본값은
+          # IfNotPresent(불변 태그라 캐시 재사용 가능)라 각 상황에 맞는 기본
+          # 동작을 그대로 따르는 게 의도에 더 맞음
+          image: ghcr.io/leeseojun-creator/codescope:latest
+          ports:
+            - containerPort: 8080
+          env:
+            # DB/Redis/Kafka는 클러스터 내부 Service DNS로 접속.
+            # application.yaml에 하드코딩된 기본값(localhost:*)은 로컬 IntelliJ
+            # 직접 실행(port-forward 경유) 전용이라, 클러스터 안에서 도는 이
+            # Pod는 환경변수로 오버라이드해야 함
+            # (Spring Boot relaxed binding: SPRING_DATASOURCE_URL -> spring.datasource.url)
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://postgres:5432/codescope
+            - name: SPRING_DATA_REDIS_HOST
+              value: redis
+            - name: SPRING_DATA_REDIS_PORT
+              value: "6379"
+            # kafka-0.kafka-headless:9092(PLAINTEXT) — 클러스터 내부 전용 리스너.
+            # EXTERNAL(9094)은 로컬 PC(IntelliJ)에서 kubectl port-forward로
+            # 접근하는 용도라 클러스터 내부 Pod에서는 쓰면 안 됨
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              value: kafka-0.kafka-headless:9092
+            # 민감정보(GitHub OAuth client-id/secret, GitHub PAT, JWT 서명 키)는
+            # codescope-secrets Secret에서 주입.
+            # 이 Secret 리소스 자체는 여기서 만들지 않음 — git에 커밋되면 안 되는
+            # 민감정보라 아래처럼 별도로 수동 생성해야 함(1회성, 클러스터 재생성마다 재실행):
+            #   kubectl create secret generic codescope-secrets \
+            #     --from-literal=GITHUB_CLIENT_ID=<value> \
+            #     --from-literal=GITHUB_CLIENT_SECRET=<value> \
+            #     --from-literal=GITHUB_TOKEN=<value> \
+            #     --from-literal=JWT_SECRET=<value>
+            - name: GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: codescope-secrets
+                  key: GITHUB_CLIENT_ID
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: codescope-secrets
+                  key: GITHUB_CLIENT_SECRET
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: codescope-secrets
+                  key: GITHUB_TOKEN
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: codescope-secrets
+                  key: JWT_SECRET
+          # 왜 /actuator/health인가: management.endpoints.web.exposure.include에
+          # health가 이미 노출되어 있어 별도 설정 추가 없이 바로 사용 가능
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 20
