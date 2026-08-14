@@ -178,6 +178,10 @@ github:
 llm:
   ollama:
     base-url: http://localhost:11434
+    # nomic-embed-text: 768차원. 비용 문제로 OpenAI 임베딩/생성 모두
+    # 배제하고 로컬/배포 동일하게 이 모델 하나로 통일(Day 25 확정,
+    # V3__change_embedding_to_vector.sql의 vector(768)과 차원 일치)
+    embedding-model: nomic-embed-text
   openai:
     api-key: ${OPENAI_API_KEY:}
 
