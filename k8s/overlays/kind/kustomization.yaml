@@ -17,4 +17,4 @@ patches:
 # 단계에서 `kustomize edit set image` + git push로 자동화 예정)
 images:
   - name: ghcr.io/leeseojun-creator/codescope
-    newTag: 51df03d2da8d53078ba90d17f6771fa5605a4fb9
+    newTag: acf6790f634174f5c8cc175597d8195e12cba757
