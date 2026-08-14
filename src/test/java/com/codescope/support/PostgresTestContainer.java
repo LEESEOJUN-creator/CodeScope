@@ -28,8 +28,17 @@ import org.testcontainers.containers.PostgreSQLContainer;
  */
 public abstract class PostgresTestContainer {
 
+    // 왜 postgres:15가 아니라 pgvector/pgvector:pg15인가:
+    //   V3 마이그레이션이 CREATE EXTENSION vector를 실행하는데, 순정
+    //   postgres:15 이미지에는 pgvector 확장 파일 자체가 없어 Flyway
+    //   마이그레이션이 이 컨테이너를 쓰는 모든 @DataJpaTest에서 실패한다.
+    //   pgvector/pgvector:pg15는 postgres:15 기반 위에 확장만 추가한
+    //   이미지라 기존 테스트 동작에는 영향이 없다.
     private static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>("postgres:15")
+            new PostgreSQLContainer<>(
+                    org.testcontainers.utility.DockerImageName
+                            .parse("pgvector/pgvector:pg15")
+                            .asCompatibleSubstituteFor("postgres"))
                     .withDatabaseName("codescope_test")
                     .withUsername("test")
                     .withPassword("test");
