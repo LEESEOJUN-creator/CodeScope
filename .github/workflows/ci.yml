@@ -19,7 +19,10 @@ jobs:
     # 방식이라 브로커가 없어도 컨텍스트 기동 자체는 실패하지 않음
     services:
       postgres:
-        image: postgres:15
+        # pgvector 확장 필요(V3__change_embedding_to_vector.sql이
+        # CREATE EXTENSION vector를 실행). 순정 postgres:15에는 확장
+        # 파일이 없어 CI에서 Flyway 마이그레이션이 실패한다.
+        image: pgvector/pgvector:pg15
         env:
           POSTGRES_DB: codescope
           POSTGRES_USER: postgres
