@@ -818,3 +818,80 @@ finally { ack.acknowledge(); }` 구조를 코드 리뷰로 검토 → `finally`�
   — 이슈 1~4 관련 최종 매니페스트
 - `src/main/java/com/codescope/infra/github/GithubApiClient.java` — 이슈 5
 - `src/main/java/com/codescope/kafka/consumer/CollectConsumer.java` — 이슈 6
+
+## Day 25: 로컬 실행 중 Kafka 리밸런싱 폭주 + DB "relation does not exist" 일시 오류
+
+Ollama 임베딩 연동 실측 검증을 위해 로컬(IntelliJ) 실행 + `kubectl
+port-forward`로 kind의 postgres/kafka에 붙여 장시간(약 30분 이상) 돌리던
+중 발생. 재현을 의도적으로 시도한 것은 아니고, 실제 파이프라인 검증
+도중 우연히 마주친 문제를 그 자리에서 진단한 기록이다.
+
+**증상**: 22:46:04부터 최소 23:12까지(25분 이상) `collect-group`,
+`embed-group`을 포함한 모든 Kafka consumer group이 반복적으로 coordinator를
+잃고 재가입을 시도:
+```
+Group coordinator localhost:9094 ... is unavailable or invalid due to cause: error response NOT_COORDINATOR
+Request joining group due to: group is already rebalancing
+```
+in-flight 요청이 최대 **330777ms(5.5분)**, 이후 **1057191ms(17.6분)** 동안
+붙잡혀 있다가 끊김. 같은 구간에 `HikariPool - Failed to validate
+connection ... This connection has been closed`(DB 커넥션 검증 실패),
+Ollama 쪽 `ReadTimeoutException`도 반복. 이 구간 중 22:47:10에
+`CollectConsumer` DLT 핸들러에서
+```
+ERROR: relation "github_repository" does not exist
+Position: 229
+```
+가 여러 레포에 대해 연속으로 찍힘.
+
+**진단 과정**: "relation does not exist"만 보면 스키마 유실을 의심할
+상황이라, 먼저 postgres Pod 자체를 확인:
+```
+$ kubectl get pod -l app=postgres
+postgres-6d94bb5bf5-qzt4q   Running   restartCount=0   startTime=2026-08-14T09:09:32Z
+Events: <none>
+```
+사고 구간 전후로 재시작 이력 없음(같은 Pod, 같은 시작 시각) — postgres
+자체는 죽거나 재생성된 적이 없음을 확정. 이어서 로컬 port-forward
+프로세스도 확인:
+```
+$ netstat -ano | grep :5432
+TCP 127.0.0.1:5432  LISTENING  15112
+$ tasklist /FI "PID eq 15112"
+kubectl.exe  15112
+```
+5432를 점유한 프로세스가 처음 시작한 것과 동일한 kubectl port-forward
+하나뿐임을 확인(포트 충돌·로컬 docker-compose postgres 개입 아님).
+
+**원인**: postgres Pod 재시작이 아니라는 것은 확정했으나, "relation does
+not exist"가 정확히 왜 발생했는지는 로그만으로 100% 확정하지 못했다.
+Kafka(9094)·DB(5432)·Ollama(11434) 세 개 커넥션이 같은 시간대에 동시에
+불안정해진 정황(반복적 coordinator 유실, HikariCP 커넥션 검증 실패,
+Ollama 타임아웃)으로 볼 때, `kubectl port-forward` 터널 또는 로컬
+PC/Docker Desktop 자체가 이 구간 동안 불안정했을 가능성이 가장 유력하다.
+터널이 흔들리는 동안 죽은 커넥션 일부가 HikariCP 검증을 통과해 재사용되며
+깨진 TCP 스트림을 pgJDBC가 잘못 해석해 이런 에러를 냈을 것으로 추정 —
+다만 port-forward 프로세스 자체의 끊김/재연결 로그가 남지 않아 이 부분은
+"확정된 원인"이 아니라 "가장 유력한 정황 증거"로 남긴다.
+
+**해결**: 별도 조치 없음 — `@RetryableTopic`(지수 백오프 3회) + DLT
+설계가 그대로 작동해 자동 복구됨. 사고 구간 이후 같은 레포들이 다음
+스케줄러 사이클에서 정상 재수집·재임베딩됨을 실측 확인(예:
+`sindresorhus/awesome`이 DLT 도달 후 다음 사이클에서
+`레포 갱신 완료: stars=495620` 로그로 정상 처리).
+
+**영향 범위(실측)**: 이 사고로 데이터가 유실되지 않았음을 최종 상태
+조회로 확인. `repo_embeddings` 10건 중 3건(`openclaw/openclaw`,
+`practical-tutorials/project-based-learning`, `tensorflow/tensorflow`)은
+과거 성공한 벡터는 남아있지만 이 구간 재시도 실패로 `process_status`가
+`FAILED`로 확정됨(RAG 추천 쿼리는 `status=EMBEDDED`만 필터링하므로 다음
+성공 사이클 전까지 추천 대상에서 제외되는 정상 동작).
+
+**교훈**: `kubectl port-forward`는 배포 환경(k3s, Pod 내부 통신)에 없는
+로컬 전용 경로라 이 구간이 유일한 단일 장애점(SPOF)이 된다. "relation
+does not exist" 같이 스키마 문제처럼 보이는 에러가 나와도, 먼저 대상
+Pod의 재시작 이력(`restartCount`, `startTime`, `Events`)부터 확정하고
+그 다음 네트워크 경로를 의심하는 순서가 안전하다 — 겉보기 에러 메시지와
+실제 계층(스키마 vs 네트워크)이 다를 수 있다. 이 문제는 구조적으로
+배포 환경(k3s)에서는 재현되지 않는다(Pod 내부 통신에는 로컬 전용
+port-forward 경로가 끼지 않음).
