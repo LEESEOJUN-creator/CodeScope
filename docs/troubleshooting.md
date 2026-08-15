@@ -19,6 +19,7 @@
 - [Day 26: EmbedConsumer 구조적 한계 — poll 스레드 동기 처리로 인한 리밸런싱](#day-26-embedconsumer-구조적-한계--poll-스레드-동기-처리로-인한-리밸런싱)
 - [Day 26 (근본 리팩토링): EmbedConsumer poll 스레드 분리 + RestClient 타임아웃 실측 검증](#day-26-근본-리팩토링-embedconsumer-poll-스레드-분리--restclient-타임아웃-실측-검증)
 - [Day 26+27: RAG 레포 추천(RepoRecommendService) 구현 및 llama3.2:3b 반복 생성 열화 실측](#day-2627-rag-레포-추천repo-recommendservice-구현-및-llama323b-반복-생성-열화-실측)
+- [Day 26+27: nomic-embed-text 한국어 검색 한계 발견](#day-2627-nomic-embed-text-한국어-검색-한계-발견)
 
 ## N+1 문제 재현 및 해결 (Fetch Join)
 
@@ -1274,3 +1275,36 @@ pgvector 검색 + LLM 생성 전체 포함).
   통합 테스트(신규)
 - `src/main/java/com/codescope/domain/repo/repository/IssueJpaRepository.java` —
   IssueRecommendService 선행 과제 TODO 기록
+
+## Day 26+27: nomic-embed-text 한국어 검색 한계 발견
+
+생성(LLM) 쪽 다국어 섞임 문제를 조사하던 중, 사용자 질문("임베딩 쪽도
+깨지나?")을 계기로 임베딩 모델의 언어 처리 자체를 별도로 실측 검증함.
+
+**결론부터**: 임베딩은 텍스트를 생성하는 게 아니라 숫자 벡터로
+변환하는 것뿐이라 "깨짐"(다른 스크립트 혼입 등) 자체가 발생할 수 있는
+구조가 아니다. 대신 실제 문제는 **의미 이해 품질이 언어에 따라 크게
+다르다**는 것이었다.
+
+**실측(코사인 유사도, 질의=`search_query:`, 문서=`search_document:`
+prefix — 실제 코드와 동일 조건)**:
+
+- 완전한 한국어 자연어 질의(예: "Kafka 관련 문서 찾아줘")로 코사인
+  유사도 검색 시, 관련 문서(0.5148)와 무관 문서(0.5156) 구분이 거의
+  안 됨(사실상 랜덤 수준)
+- 영어 질의는 명확히 구분됨(관련 0.7532 vs 무관 0.4367)
+- 원인 추정: nomic-embed-text가 영어 중심 학습 + README 코퍼스도
+  대부분 영어라서 한국어 의미 이해가 약함
+- 현재 `RepoRecommendService`는 `stack` 파라미터가 쉼표 구분 영어
+  기술명 나열(예: `"Java,Spring Boot,Kafka"`)이라 이 한계에 걸리지
+  않음(실측: 관련 0.8328 vs 무관 0.4918, 명확히 구분됨) — **단, 이건
+  의도된 설계가 아니라 우연히 API 명세가 영어 나열형이라 회피된
+  것임을 명시한다.**
+
+**향후 재검토 필요 시점**: "자유 서술형 한국어 검색" 기능을 추가할
+경우 이 한계가 바로 드러난다. 그때 재검토할 옵션: 다국어 임베딩
+모델(예: multilingual-e5)로 교체, 또는 입력 전처리(한국어→영어 번역
+단계 추가).
+
+**오늘은 코드 변경 없이 기록만 남김** — 현재 사용 패턴에서는 실질적
+영향이 없다고 판단.
