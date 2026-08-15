@@ -1089,7 +1089,19 @@ spring:
 |---|---|
 | EMBEDDED | 10 |
 | FAILED | 6 |
-| COLLECTED (초대형 README, 처리 진행 중 — 백그라운드로 계속 돌게 둠) | 14 |
+| COLLECTED (초대형 README, 처리 진행 중) | 14 |
+
+**세션 종료 처리**: IntelliJ를 계속 켜두는 것은 현실적이지 않아 앱을
+정상 종료함. 종료 시점에 안전한지 코드로 재확인:
+`enable-auto-commit: false` + `AckMode.MANUAL`이고, `EmbedConsumer.consume()`
+(poll 스레드)은 작업을 워커 큐에 넘기기만 할 뿐 `ack.acknowledge()`를
+직접 호출하지 않는다 — ack는 워커 스레드가 성공/최종실패를 확정한
+시점에만 호출된다. 따라서 종료 시점에 워커가 처리 중이었거나 큐에
+대기 중이던 메시지는 한 번도 커밋되지 않은 상태이므로 Kafka 브로커에
+그대로 남고, **다음 세션에 IntelliJ를 다시 켜면 마지막 커밋 오프셋부터
+자동으로 재전달되어 이어서 처리된다**(데이터 유실 없음, at-least-once
+유지). 남은 COLLECTED 14건(초대형 README)은 별도 조치 없이 다음 실행
+시 그대로 재개됨.
 
 ### 관련 파일
 
