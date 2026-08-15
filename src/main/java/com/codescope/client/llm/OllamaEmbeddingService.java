@@ -36,8 +36,12 @@ public class OllamaEmbeddingService implements EmbeddingService {
     // 전용이라 "search_document: "만 사용한다.)
     private static final String DOCUMENT_PREFIX = "search_document: ";
 
+    // 검색 질의(embedQuery)용 prefix. DOCUMENT_PREFIX와 짝을 이루는
+    // nomic-embed-text 공식 권장 사용법(질의 쪽).
+    private static final String QUERY_PREFIX = "search_query: ";
+
     private final RestClient ollamaRestClient;
-    private final Semaphore ollamaEmbeddingSemaphore;
+    private final Semaphore ollamaSemaphore;
     private final String embeddingModel;
 
     // @Value를 필드가 아닌 생성자 파라미터에 붙이기 위해 Lombok
@@ -45,11 +49,11 @@ public class OllamaEmbeddingService implements EmbeddingService {
     // 객체는 그대로 생성자 주입 - @Autowired 미사용 원칙 유지).
     public OllamaEmbeddingService(
             RestClient ollamaRestClient,
-            @Qualifier("ollamaEmbeddingSemaphore") Semaphore ollamaEmbeddingSemaphore,
+            @Qualifier("ollamaSemaphore") Semaphore ollamaSemaphore,
             @Value("${llm.ollama.embedding-model}") String embeddingModel
     ) {
         this.ollamaRestClient = ollamaRestClient;
-        this.ollamaEmbeddingSemaphore = ollamaEmbeddingSemaphore;
+        this.ollamaSemaphore = ollamaSemaphore;
         this.embeddingModel = embeddingModel;
     }
 
@@ -82,6 +86,19 @@ public class OllamaEmbeddingService implements EmbeddingService {
         return sum;
     }
 
+    @Override
+    public float[] embedQuery(String queryText) {
+        if (queryText == null || queryText.isBlank()) {
+            throw new IllegalStateException("임베딩할 검색 질의가 비어있습니다");
+        }
+
+        // 왜 청킹하지 않는가: 이 메서드의 실제 호출 대상(사용자 스택
+        // 입력 등)은 README와 달리 짧은 텍스트라 500자를 넘길 일이
+        // 거의 없다. embed()처럼 청크+평균 로직을 그대로 가져오면
+        // "짧은 질의 하나"에 불필요한 복잡도만 늘어난다.
+        return callOllama(QUERY_PREFIX + queryText);
+    }
+
     // 500자 단위 단순 분할(오버랩 없음). 문장 중간이 끊길 수 있으나
     // 이번 스코프에서는 감수한다.
     private List<String> chunk(String text) {
@@ -97,7 +114,7 @@ public class OllamaEmbeddingService implements EmbeddingService {
         // try 안에서 acquire하면 acquire 자체의 실패(InterruptedException)에도
         // finally의 release()가 실행되어 permits 카운트가 실제 획득 없이 늘어난다.
         try {
-            ollamaEmbeddingSemaphore.acquire();
+            ollamaSemaphore.acquire();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Ollama 임베딩 세마포어 획득 중 인터럽트됨", e);
@@ -122,7 +139,7 @@ public class OllamaEmbeddingService implements EmbeddingService {
             }
             return vector;
         } finally {
-            ollamaEmbeddingSemaphore.release();
+            ollamaSemaphore.release();
         }
     }
 }

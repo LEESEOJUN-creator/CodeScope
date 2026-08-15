@@ -34,4 +34,25 @@ public class OllamaRestClientConfig {
                 .requestFactory(requestFactory)
                 .build();
     }
+
+    // Day 26+27: 생성(OllamaLlmClient) 전용 RestClient. 임베딩용
+    // ollamaRestClient와 baseUrl은 같지만 read-timeout을 별도로 둔다
+    // (생성이 임베딩보다 오래 걸릴 수 있음, application.yaml
+    // llm.ollama.generation 주석 참고) — 그래서 하나로 합치지 않고
+    // Bean을 분리했다.
+    @Bean
+    public RestClient ollamaGenerationRestClient(
+            @Value("${llm.ollama.base-url}") String baseUrl,
+            @Value("${llm.ollama.generation.connect-timeout-ms}") long connectTimeoutMs,
+            @Value("${llm.ollama.generation.read-timeout-ms}") long readTimeoutMs
+    ) {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(Duration.ofMillis(connectTimeoutMs));
+        requestFactory.setReadTimeout(Duration.ofMillis(readTimeoutMs));
+
+        return RestClient.builder()
+                .baseUrl(baseUrl)
+                .requestFactory(requestFactory)
+                .build();
+    }
 }

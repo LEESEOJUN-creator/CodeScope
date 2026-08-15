@@ -18,6 +18,7 @@
   6. [Kafka 컨슈머 커밋 로직의 finally 블록 오류](#6-kafka-컨슈머-커밋-로직의-finally-블록-오류)
 - [Day 26: EmbedConsumer 구조적 한계 — poll 스레드 동기 처리로 인한 리밸런싱](#day-26-embedconsumer-구조적-한계--poll-스레드-동기-처리로-인한-리밸런싱)
 - [Day 26 (근본 리팩토링): EmbedConsumer poll 스레드 분리 + RestClient 타임아웃 실측 검증](#day-26-근본-리팩토링-embedconsumer-poll-스레드-분리--restclient-타임아웃-실측-검증)
+- [Day 26+27: RAG 레포 추천(RepoRecommendService) 구현 및 llama3.2:3b 반복 생성 열화 실측](#day-2627-rag-레포-추천repo-recommendservice-구현-및-llama323b-반복-생성-열화-실측)
 
 ## N+1 문제 재현 및 해결 (Fetch Join)
 
@@ -1114,3 +1115,106 @@ spring:
   connect/read 타임아웃 추가
 - `src/main/resources/application.yaml` — `codescope.embed-worker.*`,
   `github.api.*-timeout-ms`, `llm.ollama.*-timeout-ms`
+
+## Day 26+27: RAG 레포 추천(RepoRecommendService) 구현 및 llama3.2:3b 반복 생성 열화 실측
+
+Day 25(임베딩 파이프라인)에 이어 pgvector 유사도 검색 + LLM 생성을 묶은
+RAG 추천(`RepoRecommendService`)과 트렌드 분석(`TrendAnalysisService`)을
+구현하고, 실제 로컬 인프라(Postgres/Ollama)로 통합 테스트까지 실행해
+검증한 기록.
+
+### 구현 범위
+
+- `LlmClient`/`OllamaLlmClient`: Ollama(`llama3.2:3b`)로 텍스트 생성.
+  임베딩(`OllamaEmbeddingService`)과 동일한 Ollama 프로세스를 쓰므로
+  세마포어(`ollamaSemaphore`)를 공유(별도 Bean으로 나누지 않음 — 근거는
+  `OllamaSemaphoreConfig` 클래스 주석 참고)
+- `EmbeddingService.embedQuery()` 신규 추가: 기존 `embed()`는 인덱싱용
+  `search_document: ` prefix가 하드코딩돼 있어 검색 질의에 그대로 쓰면
+  안 됨(nomic-embed-text는 문서/질의를 다른 벡터 공간으로 학습) — 질의
+  전용 `search_query: ` prefix 메서드를 분리
+- `RepoEmbeddingJpaRepository.findNearestEmbeddedByEmbedding()` 신규
+  추가: 기존 `findNearestByEmbedding()`(Day 24 pgvector 검증 테스트가
+  사용 중이라 유지)은 `process_status` 필터가 없어, 과거 EMBEDDED였다가
+  이후 실패로 FAILED가 된 레포(2026-08-15 실측으로 존재 확인됨)도 섞여
+  나올 수 있음 — `github_repository`와 JOIN해 `status='EMBEDDED'`만
+  걸러내는 별도 쿼리로 분리
+- `IssueRecommendService`는 스코프에서 제외(TODO로 `IssueJpaRepository`에
+  기록) — `issues` 테이블 0건, 수집 파이프라인 자체가 없어 실제 데이터로
+  검증할 방법이 없었음. Issue 엔티티 필드(body/url/labels)도 없어 근본
+  해결에는 별도 수집 파이프라인 신규 구현이 선행돼야 함
+
+### 실측 1 — 통합 테스트로 환각 방지 검증
+
+`RepoRecommendServiceIntegrationTest`(`@SpringBootTest`, 실제 Ollama +
+실제 Postgres/pgvector 사용, Ollama reachability 체크로 CI 자동 스킵)로
+검증: 스택과 밀접한 레포 1개 + 무관한 레포 1개를 실제 Ollama 임베딩으로
+저장한 뒤 `recommend("Java, Spring Boot, Kafka")` 호출 시, 응답 후보
+목록에 두 레포가 모두 포함되고 LLM 응답 텍스트에 실제 후보 레포 이름이
+등장하는지(목록 밖 이름을 지어내지 않는지) 확인.
+
+### 실측 2 — RestClient 생성 타임아웃 재조정
+
+첫 통합 테스트 시도에서 `Read timed out` 발생. `keep_alive=0`으로
+모델을 강제 언로드한 뒤 콜드 스타트를 직접 실측한 결과 **77.8초**(모델
+로드 28초 포함)가 걸림을 확인 — 처음 잡은 60초 타임아웃은 이 콜드
+스타트를 전혀 커버하지 못했음. 실측값의 약 2배 여유를 둔 **150초**로
+`llm.ollama.generation.read-timeout-ms`를 재조정.
+
+### 실측 3 — llama3.2:3b 반복 생성 열화(repetition degeneration)
+
+타임아웃 재조정 후에도 통합 테스트가 계속
+`Expecting "사용자 기술" to contain "test-recommend/spring-kafka-toolkit"`로
+실패. 원인 진단을 위해 동일 프롬프트를 curl로 직접 호출해본 결과:
+
+- 모델이 같은 추천 문장("test-recommend/spring-kafka-toolkit ... 이유")을
+  **3번 그대로 반복**하다가 context 길이(4096 토큰)를 다 소진해, 응답이
+  "사용자 기술"이라는 단어 중간에서 강제로 잘림(`"done": false`)
+- 3B급 소형 로컬 모델에서 흔히 나타나는 반복 생성 열화 현상. 반복이
+  스스로 멈추지 못하고 토큰 예산을 전부 써버려 정작 필요한 답변 뒷부분이
+  잘려나가는 것이 핵심 문제
+
+**해결**: `/api/generate` 요청에 `options.repeat_penalty: 1.3`(Ollama
+기본값 1.1보다 강화) 추가. 동일 프롬프트로 재검증한 결과 반복 없이
+`"done": true, "done_reason": "stop"`로 정상 완결, 후보 레포 2개 모두에
+대해 서로 다른 이유로 설명하는 응답을 받음. 이후 통합 테스트도
+`BUILD SUCCESSFUL`로 통과(테스트 자체 소요 시간 98.259초 — 임베딩 2회 +
+pgvector 검색 + LLM 생성 전체 포함).
+
+**참고(별개로 관찰된 한계, 이번 스코프에서 해결하지 않음)**: `repeat_penalty`
+적용 후에도 한국어 응답에 간간이 다른 스크립트(일본어/태국어 등) 문자가
+섞여 나오는 것을 관찰함 — 3B급 모델의 다국어(특히 한국어) 생성 품질
+한계로 추정. 오늘 검증 목표(환각 방지, 반복 열화 방지)는 응답에 실제
+후보 레포 이름이 정확히 포함되는지가 핵심이라 이 문제로 테스트가
+실패하지는 않았으나, 사용자에게 노출되는 프로덕션 응답 품질 관점에서는
+추후 프롬프트 조정(영어 강제 유도) 또는 상위 모델 교체를 검토할 필요가
+있음.
+
+### 실측 중 발견한 부수 이슈 — port-forward 불안정성
+
+이번 검증 과정(약 1시간, 여러 차례 `./gradlew test` 재시도) 동안
+`kubectl port-forward`로 연결한 postgres/redis가 **3회** 별다른 예고
+없이 끊김을 반복 관찰. Day 25 트러블슈팅에서 이미 "로컬 전용 SPOF"로
+지목된 문제가 이번에도 재현됨 — 매번 재연결로 대응했으나, 장시간 검증
+작업 전에는 port-forward 생존을 주기적으로 확인하는 습관이 필요함을
+재확인.
+
+### 관련 파일
+
+- `src/main/java/com/codescope/client/llm/LlmClient.java`,
+  `OllamaLlmClient.java`, `OllamaGenerationRequest.java`,
+  `OllamaGenerationResponse.java` — 생성 클라이언트(신규)
+- `src/main/java/com/codescope/client/llm/EmbeddingService.java`,
+  `OllamaEmbeddingService.java` — `embedQuery()` 추가
+- `src/main/java/com/codescope/domain/repo/service/RepoRecommendService.java`,
+  `TrendAnalysisService.java` — RAG 추천 / 트렌드 분석(신규)
+- `src/main/java/com/codescope/domain/repo/repository/RepoEmbeddingJpaRepository.java` —
+  `findNearestEmbeddedByEmbedding()` 추가
+- `src/main/java/com/codescope/api/controller/repo/RecommendController.java`,
+  `TrendAnalysisController.java` — 컨트롤러(신규)
+- `src/main/resources/db/migration/V4__add_trend_score_analysis_text.sql` —
+  `trend_scores.analysis_text` 컬럼 추가
+- `src/test/java/com/codescope/domain/repo/service/RepoRecommendServiceIntegrationTest.java` —
+  통합 테스트(신규)
+- `src/main/java/com/codescope/domain/repo/repository/IssueJpaRepository.java` —
+  IssueRecommendService 선행 과제 TODO 기록

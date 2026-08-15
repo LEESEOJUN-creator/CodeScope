@@ -43,6 +43,11 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.PUT, "/api/repos/**").authenticated()
                         .requestMatchers(HttpMethod.PATCH, "/api/repos/**").authenticated()
                         .requestMatchers(HttpMethod.DELETE, "/api/repos/**").authenticated()
+                        // CLAUDE.md API 명세: /api/recommend는 비로그인도 호출 가능
+                        // (skills 파라미터로 스택 직접 지정). 로그인 시 저장된 스택
+                        // 자동 사용은 User 서비스 로직 구현 시점 과제(현재 미구현)
+                        .requestMatchers(HttpMethod.GET, "/api/recommend").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/trends/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(jwtAuthenticationEntryPoint))

@@ -219,6 +219,23 @@ llm:
     #   실패로 오판)이 될 수 있음을 경계함
     connect-timeout-ms: 3000
     read-timeout-ms: 20000
+    # Day 26+27: 텍스트 생성(RepoRecommendService/TrendAnalysisService)용
+    # 별도 모델·타임아웃. 위 embedding-model/*-timeout-ms(임베딩 전용)와
+    # 목적이 달라 분리했다 — RestClient Bean도 별도(OllamaRestClientConfig
+    # 참고), Semaphore는 공유(OllamaSemaphoreConfig 참고).
+    generation:
+      model: llama3.2:3b
+      connect-timeout-ms: 3000
+      # 왜 read-timeout 150초인가(2026-08-16 실측):
+      #   처음엔 60초로 잡았으나 실제 통합 테스트에서 Read timed out이
+      #   발생. 원인 진단을 위해 keep_alive=0으로 모델을 강제 언로드한
+      #   뒤 콜드 스타트를 직접 실측한 결과 77.8초(모델 로드 28초 +
+      #   추론 포함)가 걸림을 확인. 60초는 이 콜드 스타트 시나리오를
+      #   전혀 커버하지 못했던 것 — 워밍업된 상태(모델이 이미 메모리에
+      #   있는 경우)는 훨씬 빠르지만, keep-alive TTL(기본 5분) 경과 후
+      #   첫 요청은 항상 이 콜드 스타트 비용을 다시 낸다. 실측값
+      #   77.8초의 약 2배 여유를 둔 150초로 설정
+      read-timeout-ms: 150000
   openai:
     api-key: ${OPENAI_API_KEY:}
 
@@ -233,6 +250,10 @@ llm:
 #   concurrency와 맞춰 poll 스레드 대기시간을 줄이는 것으로 우선 대응
 # ──────────────────────────────────────
 codescope:
+  # 2026-08-16(Day 26+27): OllamaLlmClient(생성)도 이 세마포어를 공유한다
+  # — 임베딩과 생성이 별개 하류 시스템이 아니라 동일한 로컬 Ollama
+  # 프로세스를 두드리는 것이라, 나눠봐야 실제 자원 경합은 그대로 재현됨
+  # (근거는 OllamaSemaphoreConfig 클래스 주석 참고)
   ollama-semaphore:
     permits: 4
   # Day 26 근본 리팩토링: EmbedConsumer가 poll 스레드에서 실제 임베딩
