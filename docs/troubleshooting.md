@@ -16,6 +16,7 @@
   4. [로컬 개발 환경에서 K8s 내부 Kafka 접근 시 advertised.listeners DNS 해석 실패](#4-로컬-개발-환경에서-k8s-내부-kafka-접근-시-advertisedlisteners-dns-해석-실패)
   5. [GitHub Personal Access Token 만료로 인한 401 Bad Credentials](#5-github-personal-access-token-만료로-인한-401-bad-credentials)
   6. [Kafka 컨슈머 커밋 로직의 finally 블록 오류](#6-kafka-컨슈머-커밋-로직의-finally-블록-오류)
+- [Day 26: EmbedConsumer 구조적 한계 — poll 스레드 동기 처리로 인한 리밸런싱](#day-26-embedconsumer-구조적-한계--poll-스레드-동기-처리로-인한-리밸런싱)
 
 ## N+1 문제 재현 및 해결 (Fetch Join)
 
@@ -895,3 +896,101 @@ Pod의 재시작 이력(`restartCount`, `startTime`, `Events`)부터 확정하�
 실제 계층(스키마 vs 네트워크)이 다를 수 있다. 이 문제는 구조적으로
 배포 환경(k3s)에서는 재현되지 않는다(Pod 내부 통신에는 로컬 전용
 port-forward 경로가 끼지 않음).
+
+## Day 26: EmbedConsumer 구조적 한계 — poll 스레드 동기 처리로 인한 리밸런싱
+
+Day 25 사고와 별개로, 같은 로컬 환경(IntelliJ + `kubectl port-forward`)에서
+DB/Redis를 완전히 비운 클린 상태로 30건 재수집을 처음부터 관찰하던 중
+`embed-group`이 반복적으로 리밸런싱되는 것을 실측으로 재현·확정했다.
+
+**증상**: 클린 재시작 직후 `embed-group`이 몇 분 간격으로 계속 멤버
+이탈→재가입을 반복(`kubectl logs kafka-0`):
+```
+Member ...embed-group has failed, removing it from the group
+Group embed-group is dead, skipping rebalance stage
+Stabilized group embed-group generation N ...
+```
+generation 번호가 짧은 시간 안에 9 → 10 → 13 → 14로 계속 올라감. 이 동안
+DB의 `process_status`는 진전이 없거나(COLLECTED 그대로) 처리 중이던
+항목이 통째로 무효화되어 재시도되는 패턴이 반복됨.
+
+**1차 진단**: `codescope.ollama-semaphore.permits`가 기본값 2인데
+`EmbedConsumer`의 `@KafkaListener(concurrency = "3")`과 맞지 않아, poll
+스레드가 세마포어 대기 + Ollama 순차 호출로 오래 묶이는 것으로 추정.
+`permits`를 2→4로 올려 재시도.
+
+**2차 진단(근본 원인 확정)**: 코드 확인 결과 `EmbedConsumer.consume()`
+(리스너 메서드, 즉 poll 스레드에서 직접 실행)이
+`githubApiClient.fetchReadme()`, `embeddingService.embed()`를 전부 동기로
+호출하고 있음(`OllamaEmbeddingService.embed()`는 README를 500자 청크로
+쪼개 청크마다 Ollama HTTP 호출을 순차 반복). 별도 스레드/큐로 위임하는
+코드가 전혀 없음 — **poll 스레드 안에서 배압 제어(세마포어 대기)를 하는
+구조라, 배압이 곧 Kafka 생존 신호(heartbeat)까지 막아버리는 설계
+결함**임을 확인.
+
+**임시 완화책 적용**: `spring.kafka.consumer.properties.max.poll.interval.ms`를
+기본값 300000(5분)에서 900000(15분)으로 늘려 poll 스레드가 오래 묶여도
+Kafka가 죽은 컨슈머로 판단하지 않도록 함. **증상 완화일 뿐 근본 해결이
+아님을 명시** — README가 극단적으로 긴 레포("awesome list"류)는 청크 수가
+수십~수백 개에 달해 총 처리 시간이 15분도 넘길 수 있기 때문.
+
+**실측 결과 — 완화책의 한계가 그대로 재현됨**:
+- 백로그(구 실패분) 16건은 permits=4 적용 후 정상적으로 전부 소진되어
+  EMBEDDED로 전환됨(리밸런싱 없이 진행)
+- 반면 README가 매우 긴 14건(`awesome-selfhosted/awesome-selfhosted`,
+  `freeCodeCamp/freeCodeCamp`, `vinta/awesome-python`,
+  `DigitalPlatDev/FreeDomain`, `TheAlgorithms/Python`,
+  `microsoft/vscode`, `react/react` 등)은 백로그가 다 빠진 뒤에도
+  20분 넘게 단 1건도 완료되지 못함(단, Ollama `/api/ps`의
+  `expires_at` 기준 역산 결과 요청 자체는 계속 들어가고 있어 "완전히
+  멈춘 것"은 아니고 "매우 느리게 순차 처리 중"이었음을 확인)
+- 처리 시작(~19:58 KST) 후 약 15분 지점(20:05:13 KST)에
+  `consumer-embed-group-17-...`가 heartbeat 만료로 그룹에서 강제 제거되며
+  리밸런싱 재발을 확인 — **max-poll-interval을 5분→15분으로 늘려도
+  "가장 큰 레포"가 그 값을 넘는 순간 동일 증상이 재발함**이 실측으로
+  확정됨
+
+**최종 스냅샷 (2026-08-15 20:15:35 KST, 관찰 종료 시점)**:
+
+| process_status | 건수 |
+|---|---|
+| EMBEDDED | 16 |
+| COLLECTED (대형 README, 미해결) | 14 |
+| FAILED | 0 |
+
+대형 README 14건은 강제로 FAILED 처리하지 않고 그대로 둠 —
+`@RetryableTopic(attempts = "3")`으로 3회 소진 후 자연스럽게 DLT/FAILED로
+수렴하는 구조라 무한 재시도 루프 위험이 없음을 코드로 확인했고(Day 18-21
+6번 이슈에서 커밋 로직 자체는 이미 정상 처리되도록 고쳐진 상태), 데이터
+유실 위험도 없어 컨슈머를 별도로 멈추지 않았다.
+
+**적용된 설정값(오늘 실측 기준으로 그대로 유지)**:
+```yaml
+# application.yaml
+codescope:
+  ollama-semaphore:
+    permits: 4   # 기본값 2 → 4
+
+spring:
+  kafka:
+    consumer:
+      properties:
+        max.poll.interval.ms: 900000   # 기본값 300000(5분) → 900000(15분)
+```
+
+**근본 해결 (다음 세션 과제, 오늘은 미적용)**: 임베딩 처리(README
+다운로드 + 청킹 + Ollama 순차 호출)를 poll 스레드에서 분리해 별도
+스레드/큐로 비동기 위임하는 구조로 리팩토링. poll 스레드는 메시지를
+받는 즉시 큐에 넘기고 곧바로 다음 poll로 돌아가게 해, 배압(세마포어
+대기)이 Kafka heartbeat와 완전히 분리되도록 한다. 리팩토링 전까지는
+`max.poll.interval.ms` 여유값(15분)이 "이 시점 기준 관측된 가장 느린
+레포"를 커버하는 임시 안전판 역할만 한다는 점을 인지하고 있어야 한다.
+
+### 관련 파일
+
+- `src/main/java/com/codescope/kafka/consumer/EmbedConsumer.java` —
+  poll 스레드 동기 처리 지점
+- `src/main/java/com/codescope/client/llm/OllamaEmbeddingService.java` —
+  청크 단위 순차 Ollama 호출 + 세마포어
+- `src/main/resources/application.yaml` — `codescope.ollama-semaphore.permits`,
+  `spring.kafka.consumer.properties.max.poll.interval.ms`

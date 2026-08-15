@@ -128,6 +128,20 @@ spring:
       properties:
         spring.json.trusted.packages: com.codescope.kafka.dto
         spring.json.value.default.type: com.codescope.kafka.dto.CollectMessage
+        # 왜 5분(기본값) → 15분(2026-08-15 임시 완화):
+        #   EmbedConsumer가 poll 스레드 안에서 Ollama 호출을 동기로 하고
+        #   있어(OllamaEmbeddingService.embed), 청크 많은 README + 세마포어
+        #   대기가 겹치면 처리 시간이 max.poll.interval.ms(기본 5분)를 넘겨
+        #   Kafka가 "죽은 컨슈머"로 판단 → 파티션 회수 → 리밸런싱 폭주로
+        #   이어짐(Day 25와 동일 증상 재현, embed-group generation이 계속
+        #   올라가는 것으로 확인).
+        #   이건 증상 완화일 뿐 근본 해결이 아니다 — poll 스레드 안에서
+        #   배압 제어(세마포어)를 하는 구조 자체가, 배압이 곧 Kafka
+        #   생존 신호(heartbeat)까지 막아버리는 설계 결함이기 때문.
+        #   근본 해결(임베딩을 별도 스레드/큐로 분리해 poll 스레드는
+        #   빨리 빠지게 하는 구조)은 permits 비교 테스트 이후 별도
+        #   트러블슈팅 항목으로 정리해서 다룬다.
+        max.poll.interval.ms: 900000
 
 # ──────────────────────────────────────
 # Swagger UI 설정
@@ -184,6 +198,20 @@ llm:
     embedding-model: nomic-embed-text
   openai:
     api-key: ${OPENAI_API_KEY:}
+
+# ──────────────────────────────────────
+# 세마포어 설정
+# 왜 ollama-semaphore.permits를 2→4로 올렸는가(2026-08-15 실측):
+#   embed-group concurrency=3인데 permits=2라 poll 스레드가 세마포어
+#   대기 + Ollama 순차 호출로 오래 묶여 max.poll.interval.ms를 넘김 →
+#   Kafka가 죽은 컨슈머로 판단해 파티션 회수 → 리밸런싱 폭주(Day 25와
+#   동일 증상 재현, 브로커 로그에서 embed-group generation이 수 분
+#   간격으로 계속 올라가는 것으로 확인). permits를 4로 올려
+#   concurrency와 맞춰 poll 스레드 대기시간을 줄이는 것으로 우선 대응
+# ──────────────────────────────────────
+codescope:
+  ollama-semaphore:
+    permits: 4
 
 # ──────────────────────────────────────
 # JWT 설정
