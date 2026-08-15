@@ -21,32 +21,41 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 
 // Day 25: README 수집 + Ollama 임베딩 생성 + pgvector 저장까지 완성.
+// Day 26: poll 스레드 동기 처리로 인한 리밸런싱 폭주(docs/troubleshooting.md
+//   참고)를 근본 해결하기 위해, 실제 처리를 embedWorkerExecutor로 위임하는
+//   구조로 리팩토링.
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class EmbedConsumer {
 
+    // 기존 @RetryableTopic(attempts=3, backoff=1000ms×2.0)와 동일한 정책을
+    // 워커 스레드 안에서 재현한다. 상수명도 그대로 맞춰 정책이 하나임을
+    // 드러낸다.
+    private static final int MAX_ATTEMPTS = 3;
+    private static final long BACKOFF_DELAY_MS = 1000L;
+    private static final double BACKOFF_MULTIPLIER = 2.0;
+
     private final GithubApiClient githubApiClient;
     private final EmbeddingService embeddingService;
     private final GithubRepositoryJpaRepository githubRepositoryJpaRepository;
     private final RepoEmbeddingJpaRepository repoEmbeddingJpaRepository;
+    private final ExecutorService embedWorkerExecutor;
 
-    // exclude에 404를 넣은 것이 이 컨슈머에서 특히 중요하다.
-    // 왜: README가 없는 레포는 GitHub이 영구적으로 404를 반환한다.
-    //   이전에는 기본 에러 핸들러가 이런 요청을 백오프 없이 10회 반복한 뒤
-    //   조용히 버렸다 — 성공할 수 없는 호출로 Rate Limit만 소모하고
-    //   기록도 남지 않았다(코드리뷰 B).
-    //   이제 404/401/403은 재시도 없이 곧바로 DLT로 보내 기록을 남긴다.
+    // 왜 @RetryableTopic을 여전히 두는가: 이제 이 리스너 메서드 자체는
+    // "작업을 큐에 제출"만 하고 정상 반환하므로, 임베딩 처리 실패는 더 이상
+    // 여기로 전파되지 않는다(아래 processWithRetry가 전담). 이 애노테이션이
+    // 실제로 담당하는 것은 딱 하나 — embedWorkerExecutor의 큐가 가득 차서
+    // RejectedExecutionException이 던져지는 경우(백프레셔)뿐이다. 그 경우엔
+    // 기존과 동일하게 재시도 토픽으로 넘어가 지수 백오프 후 재시도되고,
+    // 그래도 계속 차 있으면 DLT로 간다.
     @RetryableTopic(
             attempts = "3",
             backoff = @Backoff(delay = 1000, multiplier = 2.0),
-            exclude = {
-                    HttpClientErrorException.NotFound.class,
-                    HttpClientErrorException.Unauthorized.class,
-                    HttpClientErrorException.Forbidden.class
-            },
             topicSuffixingStrategy = TopicSuffixingStrategy.SUFFIX_WITH_INDEX_VALUE
     )
     @KafkaListener(
@@ -55,26 +64,66 @@ public class EmbedConsumer {
             concurrency = "3"
     )
     public void consume(EmbedMessage message, Acknowledgment ack) {
-        String fullName = message.fullName();
+        // 왜 여기서 ack하지도, 예외를 삼키지도 않는가: 오프셋 커밋은
+        // 반드시 워커가 실제 임베딩까지 완료(성공 또는 최종 실패 확정)한
+        // 뒤에만 이뤄져야 한다. 그래야 재시도 중이던 메시지가 성급하게
+        // "처리 완료"로 커밋되는 일이 없다.
+        //
+        // 트레이드오프(의도적으로 감수함): 이 작업 큐는 인메모리다. 앱이
+        // 재시작되면 이미 큐에 들어갔지만 아직 워커가 다 처리하지 못한
+        // 작업은 유실될 수 있다. 하지만 이 시점엔 해당 메시지가 아직
+        // 커밋되지 않은 상태이므로, 재시작 후 Kafka가 커밋된 오프셋
+        // 이후부터 다시 전달해 재처리된다(at-least-once 유지됨) — 단,
+        // 이미 큐에 있었지만 아직 poll에서 안 넘어간 것들은 재시작 후
+        // 재시도된다.
+        try {
+            embedWorkerExecutor.execute(() -> processWithRetry(message, ack));
+        } catch (RejectedExecutionException e) {
+            log.warn("임베딩 작업 큐 포화, 재시도 위임: fullName={}", message.fullName());
+            throw e;
+        }
+    }
 
-        // CollectConsumer가 이 메시지를 발행하기 전에 반드시 저장을 마치므로
-        // (CollectConsumer 5번 단계: save 이후 embedProducer.publish) 여기서
-        // 못 찾으면 파이프라인 순서 자체가 깨진 것 — 재시도해도 소용없는
-        // 상황은 아니라(일시적으로 트랜잭션이 아직 안 보일 수도 있음)
-        // 예외를 던져 재시도/DLT에 맡긴다.
+    // 워커 스레드에서 실행된다. poll 스레드와 완전히 분리돼 있으므로
+    // 여기서 재시도 대기(백오프)로 오래 블로킹돼도 Kafka 하트비트/
+    // max.poll.interval.ms에는 아무 영향이 없다.
+    private void processWithRetry(EmbedMessage message, Acknowledgment ack) {
+        String fullName = message.fullName();
+        Exception lastException = null;
+
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                doEmbed(fullName);
+                ack.acknowledge();
+                return;
+            } catch (HttpClientErrorException.NotFound
+                     | HttpClientErrorException.Unauthorized
+                     | HttpClientErrorException.Forbidden e) {
+                // 4xx는 같은 요청을 반복해도 결과가 바뀌지 않으므로 재시도 없이
+                // 즉시 최종 실패로 확정한다(기존 @RetryableTopic의 exclude와
+                // 동일한 취지).
+                lastException = e;
+                break;
+            } catch (Exception e) {
+                lastException = e;
+                if (attempt < MAX_ATTEMPTS) {
+                    log.warn("임베딩 처리 실패, 재시도 예정: fullName={}, attempt={}/{}",
+                            fullName, attempt, MAX_ATTEMPTS, e);
+                    sleepBackoff(attempt);
+                }
+            }
+        }
+
+        handleFinalFailure(fullName, lastException);
+        ack.acknowledge();
+    }
+
+    private void doEmbed(String fullName) {
         GithubRepository repository = githubRepositoryJpaRepository.findByFullName(fullName)
                 .orElseThrow(() -> new IllegalStateException(
                         "임베딩 대상 레포가 DB에 없습니다: fullName=" + fullName));
 
-        // 실패 시(404 등 제외) 예외를 그대로 던져 커밋하지 않는다.
-        // @RetryableTopic이 일시적 오류는 지수 백오프로 재시도하고,
-        // 재시도해도 소용없는 4xx는 즉시 DLT로 보낸다.
         String readme = githubApiClient.fetchReadme(fullName);
-
-        // Ollama 연결 실패/타임아웃 등도 여기서 예외로 전파된다.
-        // 재시도 중에는 status를 건드리지 않는다 — 성급하게 FAILED로
-        // 바꾸면 다음 재시도가 성공해도 이미 잘못된 상태가 남는다.
-        // FAILED 확정은 재시도를 모두 소진한 뒤 handleDlt()에서만 한다.
         float[] embedding = embeddingService.embed(fullName, readme);
 
         // 이미 임베딩이 있으면(재수집 사이클로 다시 들어온 경우) 갱신,
@@ -91,26 +140,44 @@ public class EmbedConsumer {
         }
 
         repository.markEmbedded();
-        // JPA 변경 감지에 의존하지 않고 명시적으로 저장한다. 이 리스너
-        // 메서드에는 @Transactional이 없어 영속성 컨텍스트가 메서드
-        // 경계까지 유지된다는 보장이 없기 때문(CollectConsumer와 동일 이유).
         githubRepositoryJpaRepository.save(repository);
 
         log.info("임베딩 저장 완료: fullName={}, dim={}", fullName, embedding.length);
-
-        ack.acknowledge();
     }
 
+    // attempt=1 → 1000ms, attempt=2 → 2000ms (delay × multiplier^(attempt-1))
+    private void sleepBackoff(int attempt) {
+        long delayMs = (long) (BACKOFF_DELAY_MS * Math.pow(BACKOFF_MULTIPLIER, attempt - 1));
+        try {
+            Thread.sleep(delayMs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    // 재시도를 모두 소진한 시점에만 FAILED로 확정한다. RAG 추천 쿼리는
+    // status=EMBEDDED만 필터링하므로, 여기서 표시해 두지 않으면 반쪽짜리
+    // (COLLECTED인데 벡터 없는) 레포가 계속 "아직 처리 중"으로 오인될 수 있다.
+    private void handleFinalFailure(String fullName, Exception reason) {
+        log.error("[임베딩 최종 실패] fullName={}, reason={}", fullName,
+                reason != null ? reason.getMessage() : "unknown", reason);
+
+        githubRepositoryJpaRepository.findByFullName(fullName)
+                .ifPresent(repository -> {
+                    repository.markFailed();
+                    githubRepositoryJpaRepository.save(repository);
+                });
+    }
+
+    // 큐 포화(RejectedExecutionException)로 재시도까지 모두 소진된, 실제로는
+    // 거의 발생하지 않을 것으로 예상되는 경로. 사람이 추적할 수 있게 기록만
+    // 남긴다 — FAILED 확정은 여기서도 동일하게 처리해 일관성을 유지한다.
     @DltHandler
     public void handleDlt(EmbedMessage message,
                           @Header(KafkaHeaders.EXCEPTION_MESSAGE) String errorMessage) {
-        log.error("[DLT] 임베딩 생성 최종 실패: fullName={}, reason={}",
+        log.error("[DLT] 임베딩 작업 큐 제출 최종 실패: fullName={}, reason={}",
                 message.fullName(), errorMessage);
 
-        // 재시도 3회를 모두 소진한 시점에만 FAILED로 확정한다.
-        // RAG 추천 쿼리는 status=EMBEDDED만 필터링하므로, 여기서 표시해
-        // 두지 않으면 반쪽짜리(COLLECTED인데 벡터 없는) 레포가 계속
-        // "아직 처리 중"으로 오인될 수 있다.
         githubRepositoryJpaRepository.findByFullName(message.fullName())
                 .ifPresent(repository -> {
                     repository.markFailed();

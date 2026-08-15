@@ -17,6 +17,7 @@
   5. [GitHub Personal Access Token 만료로 인한 401 Bad Credentials](#5-github-personal-access-token-만료로-인한-401-bad-credentials)
   6. [Kafka 컨슈머 커밋 로직의 finally 블록 오류](#6-kafka-컨슈머-커밋-로직의-finally-블록-오류)
 - [Day 26: EmbedConsumer 구조적 한계 — poll 스레드 동기 처리로 인한 리밸런싱](#day-26-embedconsumer-구조적-한계--poll-스레드-동기-처리로-인한-리밸런싱)
+- [Day 26 (근본 리팩토링): EmbedConsumer poll 스레드 분리 + RestClient 타임아웃 실측 검증](#day-26-근본-리팩토링-embedconsumer-poll-스레드-분리--restclient-타임아웃-실측-검증)
 
 ## N+1 문제 재현 및 해결 (Fetch Join)
 
@@ -994,3 +995,110 @@ spring:
   청크 단위 순차 Ollama 호출 + 세마포어
 - `src/main/resources/application.yaml` — `codescope.ollama-semaphore.permits`,
   `spring.kafka.consumer.properties.max.poll.interval.ms`
+
+## Day 26 (근본 리팩토링): EmbedConsumer poll 스레드 분리 + RestClient 타임아웃 실측 검증
+
+위 항목의 "근본 해결" 과제를 실제로 구현하고 같은 날 실측 검증까지
+완료한 기록.
+
+### 설계
+
+`EmbedConsumer.consume()`(poll 스레드)은 이제 `EmbedMessage`를 받으면
+`embedWorkerExecutor`(bounded `ThreadPoolExecutor`, `EmbedWorkerConfig`)에
+작업만 제출하고 즉시 반환한다. 실제 README 다운로드 + 청킹 + Ollama
+호출 + DB 저장은 별도 워커 스레드가 전담한다.
+
+**기존 `@RetryableTopic`(3회 재시도+DLT)과의 관계**: 워커 스레드에서
+발생하는 실패는 poll 스레드로 예외를 전파할 방법이 없어(리스너 메서드가
+이미 정상 반환한 뒤이므로) 그대로 재사용할 수 없다. 대신 동일한 정책
+(3회 재시도, 지수 백오프 1000ms×2.0, 4xx 제외, 최종 실패 시
+`markFailed()`)을 워커 스레드 안에서 인메모리로 재현했다. `@RetryableTopic`
+자체는 남겨뒀지만 이제 실제로 담당하는 범위는 "작업 큐가 가득 차서
+`RejectedExecutionException`이 발생하는 경우"(백프레셔) 하나뿐이다.
+
+**오프셋 커밋 시점**: `ack.acknowledge()`는 워커가 성공 또는 최종 실패를
+확정한 뒤에만 호출한다(`Acknowledgment`는 스레드 세이프해서 워커
+스레드에서 직접 호출 가능). auto-commit은 계속 꺼진 채로 유지.
+
+**트레이드오프(의도적으로 감수)**: 작업 큐가 인메모리라 앱 재시작 시
+이미 큐에 들어갔지만 아직 워커가 다 처리하지 못한 작업은 유실될 수
+있다. 하지만 이 시점엔 해당 메시지가 아직 커밋되지 않은 상태이므로,
+재시작 후 Kafka가 커밋된 오프셋 이후부터 다시 전달해 재처리된다
+(at-least-once 유지됨).
+
+### 1차 실측 — 리밸런싱은 사라졌으나 새 증상 발견
+
+리팩토링 적용 후 재기동해 COLLECTED 14건(대형 README)을 재처리시킨 결과:
+- **리밸런싱 완전히 재현 안 됨**: 메시지 하나가 20분 넘게 "처리 중"(lag
+  미해소) 상태로 붙잡혀 있어도 `embed-group has failed`/`is dead` 로그가
+  한 번도 안 찍힘. 리팩토링 이전이었으면 15분 근처에서 반드시 재현되던
+  것과 대비.
+- 그런데 Ollama `/api/ps`의 `expires_at`이 갱신을 멈춤(호출 자체가
+  끊김). `GithubApiClient`, `OllamaEmbeddingService`가 사용하는
+  `RestClient` 두 곳 모두 connect/read 타임아웃이 전혀 설정되어 있지
+  않음을 코드로 확인 — 워커 스레드가 GitHub API 또는 Ollama 호출에서
+  무한 대기했을 가능성으로 진단.
+
+### 타임아웃 적용
+
+`RestClientConfig`(GitHub), `OllamaRestClientConfig`(Ollama) 각각에
+`SimpleClientHttpRequestFactory`로 명시적 타임아웃 추가:
+
+| 대상 | connect | read | 근거 |
+|---|---|---|---|
+| GitHub API | 3초 | 10초 | README 원문(텍스트) 응답 받기엔 충분하되 무한 대기는 확실히 차단 |
+| Ollama | 3초 | 20초 | 청크당 실측 처리 시간(2026-08-14, 약 3.5초)의 5배 이상 여유 — 너무 짧으면 정상 처리 중인 요청도 타임아웃으로 오판됨을 경계 |
+
+타임아웃 발생 시 `SimpleClientHttpRequestFactory`는
+`ResourceAccessException`(RuntimeException 계열)을 던지는데, 이는
+`EmbedConsumer.processWithRetry()`의 일반 `catch (Exception e)` 분기로
+정상적으로 잡혀 기존 재시도 정책(3회+백오프)을 그대로 타는 것을 코드로
+확인(별도 처리 불필요).
+
+### 2차 실측 — 진짜 원인은 타임아웃이 아니라 청크 수 자체였음
+
+타임아웃 적용 후 재기동해 40분 가까이 관찰했으나 대형 README 14건은
+여전히 단 1건도 완료되지 않음. 리밸런싱도 40분 내내 0건으로 안정적.
+
+**원인 재진단**: `awesome-selfhosted/awesome-selfhosted`의 실제 README를
+직접 받아본 결과 **327,708 bytes**. `OllamaEmbeddingService`가 500자
+단위로 청킹하므로 약 **655개 청크**가 나오고, 청크당 Ollama 호출이
+실측 약 3.5초라 이 레포 하나만 순차 처리하는 데 **655 × 3.5초 ≈ 38분**이
+소요된다. 개별 Ollama 호출은 20초 타임아웃 안에 매번 정상 응답하므로
+타임아웃도 안 걸리고, poll 스레드도 막히지 않으므로 리밸런싱도 안 나는
+것이 전부 "정상 동작"이었다 — 다만 청크 단위 순차 처리 구조가 초대형
+문서 앞에서 압도적으로 느릴 뿐이었다.
+
+### 최종 결론
+
+- **오늘 리팩토링의 목표(poll 스레드 처리 시간과 Kafka 컨슈머 생존을
+  분리)는 실측으로 완전히 검증됨**: 리팩토링 전에는 15분 근처에서
+  반드시 재현되던 리밸런싱이, 리팩토링 후에는 메시지가 40분 가까이
+  묶여 있어도 전혀 재현되지 않음.
+- RestClient 타임아웃 부재는 별개의 실제 결함이었고(발견 즉시 수정),
+  타임아웃 자체는 정상 동작하나 이번 스톨의 직접 원인은 아니었음
+  (원인은 청크 수 × 청크당 지연의 누적).
+- **남겨진 과제(다음 세션)**: 청크 500자/순차 처리 구조는 수백 KB급
+  README 앞에서 수십 분이 걸린다. README 길이 상한(예: 앞부분 N자만
+  임베딩), 청크 병렬 처리, 또는 청크 수 자체에 상한을 두는 방안을
+  검토해야 함. 오늘은 시간 관계상 적용하지 않고 관찰만 종료함.
+
+**최종 스냅샷 (2026-08-15 21:29:20 KST)**:
+
+| process_status | 건수 |
+|---|---|
+| EMBEDDED | 10 |
+| FAILED | 6 |
+| COLLECTED (초대형 README, 처리 진행 중 — 백그라운드로 계속 돌게 둠) | 14 |
+
+### 관련 파일
+
+- `src/main/java/com/codescope/kafka/consumer/EmbedConsumer.java` —
+  워커 위임 + 인메모리 재시도
+- `src/main/java/com/codescope/infra/config/EmbedWorkerConfig.java` —
+  bounded 워커 풀 Bean(신규)
+- `src/main/java/com/codescope/infra/github/RestClientConfig.java`,
+  `src/main/java/com/codescope/client/llm/OllamaRestClientConfig.java` —
+  connect/read 타임아웃 추가
+- `src/main/resources/application.yaml` — `codescope.embed-worker.*`,
+  `github.api.*-timeout-ms`, `llm.ollama.*-timeout-ms`

@@ -181,6 +181,17 @@ github:
   token: ${GITHUB_TOKEN:your-token-here}
   api:
     base-url: https://api.github.com
+    # 왜 connect-timeout 3초/read-timeout 10초인가(2026-08-15 실측 계기):
+    #   타임아웃이 아예 없어서, EmbedConsumer 워커 스레드가
+    #   fetchReadme() 호출에서 응답 없이 무한 대기하는 것을 실측으로
+    #   확인함(Ollama는 정상 응답하는데 워커 활동 자체가 멈춤 →
+    #   GitHub API 호출 구간에서 걸려있었던 것으로 추정). connect
+    #   3초는 로컬/사내망에서 정상 연결이면 충분한 여유치이고, read
+    #   10초는 README 원문(텍스트, 대체로 수십 KB 이하) 응답을 받기에
+    #   충분하되 무한 대기는 확실히 막는 값. 근거가 되는 별도 부하
+    #   실측은 아직 없어 잠정치이며, 추후 조정 가능
+    connect-timeout-ms: 3000
+    read-timeout-ms: 10000
 
 # ──────────────────────────────────────
 # LLM 설정
@@ -196,6 +207,18 @@ llm:
     # 배제하고 로컬/배포 동일하게 이 모델 하나로 통일(Day 25 확정,
     # V3__change_embedding_to_vector.sql의 vector(768)과 차원 일치)
     embedding-model: nomic-embed-text
+    # 왜 connect-timeout 3초/read-timeout 20초인가(2026-08-15 실측 계기):
+    #   GitHub API와 동일하게 타임아웃이 아예 없던 게 원인 중 하나였을
+    #   가능성이 있어 명시적으로 추가함. read-timeout을 GitHub보다 훨씬
+    #   길게 잡은 이유: OllamaEmbeddingService가 청크(500자) 하나당
+    #   Ollama에 요청 1번을 보내는데, 실측(2026-08-14 임베딩 실제 연동
+    #   검증 당시)상 청크 1개 처리에 약 3.5초가 걸림. 로컬 CPU 추론이라
+    #   요청마다 편차가 있을 수 있어 그 값의 5배 이상 여유를 둔 20초로
+    #   설정 — 너무 짧게 잡으면 정상 처리 중인 요청도 타임아웃으로
+    #   끊겨 버려서, "타임아웃 없음"보다 더 나쁜 상황(정상 처리를
+    #   실패로 오판)이 될 수 있음을 경계함
+    connect-timeout-ms: 3000
+    read-timeout-ms: 20000
   openai:
     api-key: ${OPENAI_API_KEY:}
 
@@ -212,6 +235,16 @@ llm:
 codescope:
   ollama-semaphore:
     permits: 4
+  # Day 26 근본 리팩토링: EmbedConsumer가 poll 스레드에서 실제 임베딩
+  # 작업을 분리해 위임하는 전용 워커 풀(EmbedWorkerConfig 참고).
+  # pool-size=6: Ollama 세마포어(permits=4)보다 약간 크게 둬, 세마포어
+  # 대기 중인 스레드가 있어도 워커가 다음 작업을 계속 받을 수 있게 함.
+  # queue-capacity=20: 무제한 큐로 인한 메모리 소진을 막기 위한 상한 —
+  # 가득 차면 RejectedExecutionException → 기존 @RetryableTopic 배선으로
+  # 재시도/DLT 처리됨(EmbedConsumer 주석 참고).
+  embed-worker:
+    pool-size: 6
+    queue-capacity: 20
 
 # ──────────────────────────────────────
 # JWT 설정

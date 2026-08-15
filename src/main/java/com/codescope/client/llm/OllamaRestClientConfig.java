@@ -3,7 +3,10 @@ package com.codescope.client.llm;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
+
+import java.time.Duration;
 
 // Ollama 임베딩 API 호출용 RestClient 등록.
 // 왜 RestClient인가: infra.github.RestClientConfig(Day 19)와 동일한 이유 —
@@ -14,9 +17,21 @@ import org.springframework.web.client.RestClient;
 public class OllamaRestClientConfig {
 
     @Bean
-    public RestClient ollamaRestClient(@Value("${llm.ollama.base-url}") String baseUrl) {
+    public RestClient ollamaRestClient(
+            @Value("${llm.ollama.base-url}") String baseUrl,
+            @Value("${llm.ollama.connect-timeout-ms}") long connectTimeoutMs,
+            @Value("${llm.ollama.read-timeout-ms}") long readTimeoutMs
+    ) {
+        // 왜 타임아웃을 명시하는가: RestClientConfig(GitHub)와 동일한
+        // 이유. 값 근거(read 20초 = 청크당 실측 3.5초의 5배 이상 여유)는
+        // application.yaml 주석 참고.
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(Duration.ofMillis(connectTimeoutMs));
+        requestFactory.setReadTimeout(Duration.ofMillis(readTimeoutMs));
+
         return RestClient.builder()
                 .baseUrl(baseUrl)
+                .requestFactory(requestFactory)
                 .build();
     }
 }
