@@ -70,11 +70,16 @@ public class TrendAnalysisService {
     // 언어, 최근 갱신 시각(BaseEntity.updatedAt). 커밋 이력·릴리스
     // 빈도 같은 세부 지표는 아직 수집하지 않아(Kafka 파이프라인이
     // GitHub 검색 API 응답 필드만 저장) 프롬프트에 포함할 수 없다.
+    // 왜 "반드시 한국어로만 답하라"를 명시하는가: RepoRecommendService와
+    // 동일한 실측 계기(docs/troubleshooting.md Day 26+27) — 이 프롬프트도
+    // 지금까지는 한국어로 써있으니 응답도 당연히 한국어일 거라 암묵적으로
+    // 기대했을 뿐, 명시적 제약이 없었다.
     private String buildPrompt(GithubRepository repository) {
         StringBuilder sb = new StringBuilder();
         sb.append("당신은 오픈소스 트렌드 분석가입니다. 아래 GitHub 레포 지표를 보고, ");
         sb.append("이 레포가 왜 주목받고 있는지 2~3문장으로 분석하세요. ");
-        sb.append("주어진 지표 밖의 사실(예: 실제 커밋 내역, 뉴스)을 지어내지 마세요.\n\n");
+        sb.append("주어진 지표 밖의 사실(예: 실제 커밋 내역, 뉴스)을 지어내지 마세요. ");
+        sb.append("반드시 한국어로만 답하세요. 다른 언어 단어를 섞지 마세요.\n\n");
         sb.append("레포: ").append(repository.getFullName()).append("\n");
         if (repository.getDescription() != null && !repository.getDescription().isBlank()) {
             sb.append("설명: ").append(repository.getDescription()).append("\n");
@@ -86,6 +91,7 @@ public class TrendAnalysisService {
         if (repository.getUpdatedAt() != null) {
             sb.append("최근 갱신: ").append(repository.getUpdatedAt().format(DATE_FORMAT)).append("\n");
         }
+        sb.append("\n답변은 반드시 한국어로만 작성하세요.");
 
         return sb.toString();
     }
