@@ -116,10 +116,19 @@ public class RepoRecommendService {
     //   3B급 모델의 다국어 생성 열화가 완전히 사라진다고 보장할 수는
     //   없다는 점은 감안 — 근본 해결이 아니라 비용이 거의 없는 개선
     //   시도(코드 몇 줄)일 뿐이다.
+    //
+    // 왜 "간결하게, N줄 이내로"를 머리말+맺음말에 추가하는가(2026-08-16,
+    // num_predict 도입과 함께 적용): num_predict(max-tokens)만으로 길이를
+    // 제한하면 모델이 문장을 다 못 쓰고 중간에 잘리는 경우가 생긴다(done=false,
+    // OllamaLlmClient 참고). 프롬프트 레벨에서도 짧게 답하도록 먼저 유도해두면
+    // num_predict 한도 안에서 자연스럽게 문장을 끝낼 확률이 올라간다 —
+    // num_predict가 "강제 상한"이라면 이건 "그 상한 안에서 스스로 끝내라"는
+    // 이중 안전장치.
     private String buildPrompt(String stack, List<RecommendedRepoDto> candidates) {
         StringBuilder sb = new StringBuilder();
         sb.append("당신은 오픈소스 프로젝트 추천 도우미입니다.\n");
         sb.append("반드시 한국어로만 답하세요. 다른 언어(영어, 일본어, 중국어 등) 단어를 섞지 마세요.\n");
+        sb.append("답변은 간결하게, 전체 5줄 이내로 작성하세요.\n");
         sb.append("아래 [후보 레포 목록]에 있는 레포만 근거로 답변하세요. ");
         sb.append("목록에 없는 레포 이름은 절대 언급하지 마세요.\n\n");
         sb.append("[사용자 기술 스택]\n").append(stack).append("\n\n");
@@ -137,7 +146,7 @@ public class RepoRecommendService {
 
         sb.append("\n위 목록 중에서 사용자 기술 스택과 가장 잘 맞는 레포를 1~3개 골라 ");
         sb.append("레포 이름과 함께 이유를 설명하세요. 위 목록에 없는 레포는 절대 만들어내지 마세요. ");
-        sb.append("답변은 반드시 한국어로만 작성하세요.");
+        sb.append("답변은 반드시 한국어로만, 전체 5줄 이내로 간결하게 작성하세요.");
 
         return sb.toString();
     }

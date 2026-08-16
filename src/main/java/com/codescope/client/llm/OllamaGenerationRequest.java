@@ -34,7 +34,19 @@ import java.util.Map;
 //   docs/troubleshooting.md Day 26+27 참고.
 public record OllamaGenerationRequest(String model, String prompt, boolean stream, Map<String, Object> options) {
 
-    public static OllamaGenerationRequest of(String model, String prompt) {
-        return new OllamaGenerationRequest(model, prompt, false, Map.of("repeat_penalty", 1.3));
+    // 왜 options.num_predict를 추가하는가(2026-08-16, GET /api/recommend 500 조사):
+    //   이 하드웨어의 CPU 추론 속도가 1.3~1.9 tok/s로 실측 확정됐고(gradle
+    //   데몬 등 다른 프로세스를 정리해도 동일 — 하드웨어 자체의 한계로 판단),
+    //   응답이 200토큰을 넘으면 read-timeout-ms(150초)를 넘기기 쉽다. 타임아웃을
+    //   무작정 늘리는 대신 응답 길이 자체를 상한선 아래로 제어하는 쪽을 택함
+    //   (llm.ollama.generation.max-tokens, application.yaml 참고). num_predict
+    //   도달 시 Ollama는 문장 중간이라도 강제 종료하므로, 프롬프트 레벨에서도
+    //   "간결하게" 제약을 같이 둬(RepoRecommendService.buildPrompt) 자연스럽게
+    //   그 안에서 끝나도록 유도하는 이중 안전장치로 설계했다.
+    public static OllamaGenerationRequest of(String model, String prompt, int maxTokens) {
+        return new OllamaGenerationRequest(model, prompt, false, Map.of(
+                "repeat_penalty", 1.3,
+                "num_predict", maxTokens
+        ));
     }
 }
