@@ -6,6 +6,8 @@ import com.codescope.domain.repo.dto.RecommendedRepoDto;
 import com.codescope.domain.repo.dto.RepoRecommendResponse;
 import com.codescope.domain.repo.entity.RepoEmbedding;
 import com.codescope.domain.repo.repository.RepoEmbeddingJpaRepository;
+import com.codescope.domain.user.dto.SkillResponse;
+import com.codescope.domain.user.service.UserSkillService;
 import com.pgvector.PGvector;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -13,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * RAG(Retrieval-Augmented Generation) 기반 레포 추천.
@@ -42,6 +45,39 @@ public class RepoRecommendService {
     private final EmbeddingService embeddingService;
     private final RepoEmbeddingJpaRepository repoEmbeddingJpaRepository;
     private final LlmClient llmClient;
+    private final UserSkillService userSkillService;
+
+    // GET /api/recommend 로그인 연동 버전. stack 파라미터/로그인 세션 조합에 따라
+    // 실제 검색·프롬프트에 쓸 스택 문자열을 우선순위대로 결정한 뒤 기존 recommend(String)에 위임한다.
+    public RepoRecommendResponse recommend(String stackParam, Long userId) {
+        String stack = resolveStack(stackParam, userId);
+        return recommend(stack);
+    }
+
+    // 스택 결정 우선순위(비즈니스 규칙이라 Controller가 아니라 Service 책임):
+    //   1) stack 파라미터가 명시되면 그대로 사용 — 로그인 여부와 무관하게 사용자 지정값 우선
+    //   2) 파라미터가 없고 로그인(userId != null)했다면 저장된 관심 스택(UserSkill)을 자동 사용
+    //   3) 둘 다 없으면(비로그인 또는 관심 스택 미등록) 400으로 명확히 응답
+    //      → IllegalArgumentException은 GlobalExceptionHandler가 400으로 매핑함(기존 컨벤션)
+    private String resolveStack(String stackParam, Long userId) {
+        if (stackParam != null && !stackParam.isBlank()) {
+            return stackParam;
+        }
+
+        if (userId != null) {
+            List<SkillResponse> skills = userSkillService.getSkills(userId);
+            if (!skills.isEmpty()) {
+                // embedQuery/buildPrompt는 stack을 파싱하지 않고 자유 텍스트로 그대로 쓰므로,
+                // "Java,Spring Boot,Kafka"처럼 쉼표로 이어붙이면 기존 포맷과 동일하게 맞아떨어진다
+                return skills.stream()
+                        .map(SkillResponse::topicName)
+                        .collect(Collectors.joining(","));
+            }
+        }
+
+        throw new IllegalArgumentException(
+                "추천할 스택을 알 수 없습니다. stack 파라미터를 지정하거나 로그인 후 관심 스택을 등록해주세요.");
+    }
 
     public RepoRecommendResponse recommend(String stack) {
         float[] queryVector = embeddingService.embedQuery(stack);
