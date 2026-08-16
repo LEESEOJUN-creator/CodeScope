@@ -83,8 +83,16 @@ public class RepoRecommendService {
         float[] queryVector = embeddingService.embedQuery(stack);
         String queryVectorLiteral = new PGvector(queryVector).toString();
 
+        // 성능 측정(Day 28~29): pgvector 유사도 검색 쿼리 하나만의 순수 소요시간을
+        // 임베딩/생성 호출과 분리해서 잰다. System.nanoTime()을 쓰는 이유는
+        // System.currentTimeMillis()와 달리 시스템 시각 조정(NTP 등)의 영향을
+        // 받지 않는 단조 증가 시계라 경과시간 측정에 더 정확하기 때문.
+        long pgvectorSearchStartNanos = System.nanoTime();
         List<RepoEmbedding> nearest = repoEmbeddingJpaRepository
                 .findNearestEmbeddedByEmbedding(queryVectorLiteral, CANDIDATE_LIMIT);
+        long pgvectorSearchElapsedMs = (System.nanoTime() - pgvectorSearchStartNanos) / 1_000_000;
+        log.info("pgvector 유사도 검색 소요시간: {}ms (candidateLimit={})",
+                pgvectorSearchElapsedMs, CANDIDATE_LIMIT);
 
         List<RecommendedRepoDto> candidates = nearest.stream()
                 .map(re -> RecommendedRepoDto.from(re.getRepository()))
