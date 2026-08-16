@@ -98,10 +98,24 @@ public class EmbedConsumer {
                 return;
             } catch (HttpClientErrorException.NotFound
                      | HttpClientErrorException.Unauthorized
-                     | HttpClientErrorException.Forbidden e) {
+                     | HttpClientErrorException.Forbidden
+                     | IllegalStateException e) {
                 // 4xx는 같은 요청을 반복해도 결과가 바뀌지 않으므로 재시도 없이
                 // 즉시 최종 실패로 확정한다(기존 @RetryableTopic의 exclude와
                 // 동일한 취지).
+                //
+                // IllegalStateException(doEmbed의 "레포가 DB에 없음")도 같은
+                // 분류다(2026-08-16 확인). CollectConsumer.consume()에는
+                // @Transactional이 없어 githubRepositoryJpaRepository.save()
+                // 호출 자체가 그 자리에서 즉시 커밋되는 독립 트랜잭션이고,
+                // embedProducer.publish()는 그 save()가 리턴된(=커밋 완료된)
+                // "다음"에만 순차 호출된다 — 별도의 Kafka 트랜잭션 동기화
+                // 장치 없이도 순차 실행 구조 자체가 "커밋 후에만 발행"을
+                // 보장한다. 즉 EmbedConsumer가 메시지를 받는 시점엔 레포가
+                // 이미 DB에 있는 게 정상이라, "레포 없음"은 타이밍 레이스가
+                // 아니라 영구적 상황(발행 이후 삭제됐거나, dev 환경 DB 리셋
+                // 후 Kafka에 남은 stale 메시지 등)이다. 재시도로 해결되지
+                // 않으므로 4xx와 동일하게 즉시 실패 확정한다.
                 lastException = e;
                 break;
             } catch (Exception e) {
