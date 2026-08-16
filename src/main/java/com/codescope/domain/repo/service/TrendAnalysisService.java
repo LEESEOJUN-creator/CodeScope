@@ -74,10 +74,18 @@ public class TrendAnalysisService {
     // 동일한 실측 계기(docs/troubleshooting.md Day 26+27) — 이 프롬프트도
     // 지금까지는 한국어로 써있으니 응답도 당연히 한국어일 거라 암묵적으로
     // 기대했을 뿐, 명시적 제약이 없었다.
+    // 왜 설명 번역을 별도 LLM 호출이 아니라 이 프롬프트에 얹는가(2026-08-16):
+    //   레포 하나당 생성 호출이 이미 90~160초 걸린다(CPU 추론 한계, 실측
+    //   문서화됨). 트렌드 카드 목록(9~12개)마다 설명을 개별 번역하면
+    //   그 개수만큼 90초씩 늘어나 비현실적이다. 이미 만들고 있는 "왜
+    //   뜨는가" 분석 호출 한 번에 번역을 앞부분으로 얹으면 추가 호출
+    //   없이 자연스럽게 해결된다 — 상세 페이지(레포 1개)에서만 쓰이므로
+    //   목록 화면의 N배 비용 문제가 애초에 없다.
     private String buildPrompt(GithubRepository repository) {
         StringBuilder sb = new StringBuilder();
         sb.append("당신은 오픈소스 트렌드 분석가입니다. 아래 GitHub 레포 지표를 보고, ");
-        sb.append("이 레포가 왜 주목받고 있는지 2~3문장으로 분석하세요. ");
+        sb.append("먼저 '설명'을 자연스러운 한국어 한 문장으로 번역하고, ");
+        sb.append("이어서 이 레포가 왜 주목받고 있는지 2~3문장으로 분석하세요. ");
         sb.append("주어진 지표 밖의 사실(예: 실제 커밋 내역, 뉴스)을 지어내지 마세요. ");
         sb.append("반드시 한국어로만 답하세요. 다른 언어 단어를 섞지 마세요.\n\n");
         sb.append("레포: ").append(repository.getFullName()).append("\n");
@@ -91,7 +99,7 @@ public class TrendAnalysisService {
         if (repository.getUpdatedAt() != null) {
             sb.append("최근 갱신: ").append(repository.getUpdatedAt().format(DATE_FORMAT)).append("\n");
         }
-        sb.append("\n답변은 반드시 한국어로만 작성하세요.");
+        sb.append("\n답변은 '설명 번역: ...' 한 줄로 시작한 뒤 분석을 이어서, 반드시 한국어로만 작성하세요.");
 
         return sb.toString();
     }

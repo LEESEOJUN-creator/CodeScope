@@ -1,0 +1,350 @@
+/* Day 30~31 디자인: Linear.app 스타일의 다크 퍼스트 UI.
+   순수 #000이 아니라 살짝 띄운 near-black을 기본 배경으로 쓰고(순정 블랙은
+   흰 텍스트와 대비가 너무 강해 눈이 피로해짐 — 실측 참고자료 기반 결정),
+   카드는 그보다 한 단계 밝은 surface 톤으로 레이어를 구분한다. 테두리는
+   헤어라인급(1px, 저채도)으로만 쓰고 box-shadow/그라데이션/과한 아이콘/
+   애니메이션은 그대로 배제한다. 이건 "다크모드 토글"이 아니라 유일하게
+   커밋한 고정 테마다(라이트 모드 전환 기능 없음). */
+:root {
+  --bg: #0a0a0b;
+  --surface: #141416;
+  --surface-hover: #1b1b1e;
+  --text: #f2f2f3;
+  --text-muted: #9a9aa2;
+  --text-faint: #6b6b73;
+  --border: #26262a;
+  --primary: #3b82f6;
+  --primary-hover: #5b93f7;
+  --primary-soft: rgba(59, 130, 246, 0.12);
+  --danger: #f87171;
+  --danger-bg: rgba(248, 113, 113, 0.1);
+  --danger-border: rgba(248, 113, 113, 0.3);
+  --radius: 8px;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html {
+  height: 100%;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+body {
+  min-height: 100%;
+  color: var(--text);
+  background: var(--bg);
+  font-family: var(--font-pretendard), -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 450;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+h1 {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ── 헤더 ───────────────────────────────────────── */
+.site-header {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.site-header__inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.brand__dot {
+  color: var(--primary);
+}
+
+.site-nav {
+  display: flex;
+  gap: 24px;
+  font-size: 14px;
+  font-weight: 450;
+  color: var(--text-muted);
+}
+
+.site-nav a:hover {
+  color: var(--text);
+}
+
+/* ── 레이아웃 ───────────────────────────────────── */
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 40px 24px 64px;
+}
+
+.page-header {
+  margin-bottom: 28px;
+}
+
+.page-subtitle {
+  color: var(--text-muted);
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+.back-link {
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 450;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+.back-link:hover {
+  color: var(--text);
+}
+
+/* ── 버튼 ───────────────────────────────────────── */
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  background: var(--primary);
+  color: #ffffff;
+  border: 1px solid var(--primary);
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── 입력 폼(추천 스택 직접 입력) ─────────────────── */
+.stack-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.text-input {
+  flex: 1;
+  padding: 9px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.text-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.text-input::placeholder {
+  color: var(--text-faint);
+}
+
+/* ── 트렌드 카드 그리드(3열) ───────────────────────── */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.card--link:hover {
+  border-color: var(--text-faint);
+}
+
+.card__row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.card__title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card__desc {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-top: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  min-height: 34px;
+}
+
+.card__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.card__meta strong {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* ── 즐겨찾기 별 버튼 ──────────────────────────── */
+.star-button {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.star-button:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.star-button--active {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+/* ── 상태 표시(로딩/에러/빈 상태) ─────────────────── */
+.state-box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.alert-error {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+/* ── 텍스트 유틸 ────────────────────────────────── */
+.muted {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.section-title {
+  margin-top: 32px;
+  margin-bottom: 10px;
+}
+
+.prose {
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+
+/* ── 로그인 화면 ────────────────────────────────── */
+.login-screen {
+  min-height: calc(100vh - 57px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 40px 36px;
+  text-align: center;
+  width: 320px;
+}
+
+.login-card h1 {
+  font-size: 22px;
+}
+
+.login-card .page-subtitle {
+  margin-bottom: 24px;
+}
+
+.login-card .button {
+  width: 100%;
+  justify-content: center;
+}
+
+.github-icon {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}

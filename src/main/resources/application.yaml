@@ -58,6 +58,25 @@ spring:
     password: postgres
     driver-class-name: org.postgresql.Driver
 
+# ──────────────────────────────────────
+# CORS 허용 오리진 (Day 30~31: 프론트엔드 연동)
+# 왜 yml로 빼는가: 코드에 하드코딩하면 Day 33~34 배포 시 운영 도메인으로
+# 바꾸려고 재컴파일해야 한다. CorsConfig가 이 값을 읽어 CorsConfigurationSource를
+# 구성한다(infra/config/CorsConfig.java 참고). 로컬 기본값은 Next.js 개발 서버 포트.
+# ──────────────────────────────────────
+cors:
+  allowed-origins: http://localhost:3000
+
+# ──────────────────────────────────────
+# 프론트엔드 URL (Day 30~31: OAuth 로그인 성공/실패 후 리다이렉트 대상)
+# 왜 백엔드가 프론트 URL을 아는가: GithubOAuth2LoginSuccessHandler가 로그인
+# 처리를 끝낸 뒤 Access Token을 응답 바디에 실어 보내지 않고(URL 노출 방지),
+# Refresh Token만 HttpOnly 쿠키로 세팅한 채 프론트 콜백 페이지로 302
+# 리다이렉트한다. 이 값도 cors.allowed-origins와 동일한 이유로 yml 관리.
+# ──────────────────────────────────────
+frontend:
+  base-url: http://localhost:3000
+
   jpa:
     hibernate:
       # validate: 스키마는 Flyway(V1__init.sql)가 관리하고, Hibernate는

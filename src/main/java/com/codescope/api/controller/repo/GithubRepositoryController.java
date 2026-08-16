@@ -100,7 +100,7 @@ public class GithubRepositoryController {
     // DB가 반환하는 순서를 보장하지 않아 트렌드 랭킹 순서(ids 순서)로 재정렬
     private List<GithubRepositoryResponse> fetchByBatch(List<Long> ids) {
         Map<Long, GithubRepositoryResponse> byId = githubRepositoryService.getByIds(ids).stream()
-                .collect(Collectors.toMap(GithubRepositoryResponse::getId, Function.identity()));
+                .collect(Collectors.toMap(GithubRepositoryResponse::id, Function.identity()));
 
         return ids.stream()
                 .map(byId::get)
