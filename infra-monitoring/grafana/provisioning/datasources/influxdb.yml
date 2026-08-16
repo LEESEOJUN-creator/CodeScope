@@ -1,0 +1,16 @@
+apiVersion: 1
+
+# Grafana가 기동하면서 이 파일을 읽어 InfluxDB를 데이터소스로 자동 등록한다
+# (Configuration > Data Sources에서 수동으로 안 눌러도 됨). "loadtest-influxdb"는
+# docker-compose 서비스명 — 같은 compose 네트워크 안에서는 컨테이너끼리
+# 서비스명으로 서로를 찾는다(localhost 아님, Docker 내부 DNS).
+datasources:
+  - name: InfluxDB-loadtest
+    type: influxdb
+    access: proxy
+    url: http://loadtest-influxdb:8086
+    database: loadtest
+    isDefault: true
+    editable: true
+    jsonData:
+      httpMode: GET

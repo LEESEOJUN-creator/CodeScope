@@ -1,0 +1,47 @@
+version: '3.8'
+
+# Day 35: 부하 테스트 전용 모니터링 스택. codescope 앱 자체가 쓰는
+# postgres/redis/kafka와는 완전히 별개 — 그쪽은 kind Pod로 이미 대체됐고
+# (docker-compose.yml 참고), 이 파일은 부하 테스트 도구(JMeter/k6)가
+# 결과를 밀어넣고 Grafana로 보기 위한 용도로만 존재한다. 포트도
+# 안 겹치게 잡았다(Grafana 3001 — codescope 프론트가 3000을 씀).
+services:
+  influxdb:
+    image: influxdb:1.8
+    container_name: loadtest-influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      # 1.8 이미지는 기동 시 이 DB가 없으면 자동 생성한다(docker-entrypoint
+      # 스크립트가 INFLUXDB_DB를 보고 CREATE DATABASE를 실행) — 수동으로
+      # curl 쳐서 만들 필요가 없다. 2번 항목에서 실제로 생성됐는지 확인할 것.
+      INFLUXDB_DB: loadtest
+    volumes:
+      - influxdb-data:/var/lib/influxdb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: loadtest-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      # 로컬 부하 테스트 전용 대시보드라 로그인 마찰을 없앤다 — 운영
+      # 환경에 노출될 일이 없는 컨테이너(호스트에도 3001로만 열림)
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      # provisioning: InfluxDB를 데이터소스로 미리 등록해서, 사용자가
+      # Grafana UI에서 수동으로 Add Data Source 안 눌러도 되게 한다.
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - influxdb
+
+volumes:
+  influxdb-data:
+  grafana-data:

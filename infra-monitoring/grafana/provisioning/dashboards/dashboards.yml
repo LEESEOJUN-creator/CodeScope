@@ -1,0 +1,17 @@
+apiVersion: 1
+
+# 이 폴더(jmeter-dashboard-4026.json, k6-dashboard-14801.json)에 있는
+# 대시보드 JSON을 Grafana가 기동 시 자동으로 읽어들인다 — Grafana Labs
+# 공식 대시보드(4026, 14801)를 받아서 datasource 플레이스홀더만 우리
+# InfluxDB-loadtest로 치환해뒀다. 원래는 "Import" 화면에서 수동으로
+# datasource를 선택해야 하는데, 그 과정을 미리 끝내둔 것.
+providers:
+  - name: loadtest-dashboards
+    orgId: 1
+    folder: "Load Test"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

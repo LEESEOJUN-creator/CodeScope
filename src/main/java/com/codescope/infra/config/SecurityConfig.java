@@ -52,6 +52,10 @@ public class SecurityConfig {
                         // 자동 사용은 User 서비스 로직 구현 시점 과제(현재 미구현)
                         .requestMatchers(HttpMethod.GET, "/api/recommend").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/trends/**").permitAll()
+                        // Day 35: 부하 테스트 트리거용 — LoadTestController 자체가
+                        // @Profile("test")라 운영 프로파일에서는 빈 자체가 안 뜬다.
+                        // JMeter/k6가 JWT 없이 바로 호출할 수 있어야 시나리오가 단순해진다.
+                        .requestMatchers(HttpMethod.POST, "/api/test/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(jwtAuthenticationEntryPoint))
