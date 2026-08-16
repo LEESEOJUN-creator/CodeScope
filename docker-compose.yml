@@ -1,23 +1,11 @@
 version: '3.8'
 
+# 왜 postgres 서비스가 없는가(2026-08-16 정리): Day 1~6 로컬 개발 초기에는
+# 여기서 postgres를 띄웠지만, Day 6~7부터 kind 클러스터의 postgres Pod로
+# 완전히 대체됐다(port-forward로 localhost:5432 접속). 이 파일에 옛
+# postgres 서비스가 남아있으면 "docker-compose up으로 DB를 띄우는 건가?"
+# 하는 혼란만 준다 — 로컬 기동은 scripts/local-up.ps1 참고.
 services:
-  postgres:
-    image: pgvector/pgvector:pg15
-    container_name: codescope-postgres
-    environment:
-      POSTGRES_DB: codescope
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data  # 컨테이너 재시작해도 데이터 유지
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   redis:
     image: redis:7
     container_name: codescope-redis
@@ -53,5 +41,4 @@ services:
       - kafka
 
 volumes:
-  postgres-data:
   redis-data:
