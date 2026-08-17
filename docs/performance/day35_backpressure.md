@@ -1,4 +1,4 @@
-# Day 35 DB 커넥션 풀 배압(backpressure) 실험
+# DB 커넥션 풀 배압(backpressure) 실험
 
 목적: `DbSemaphoreConfig`의 세마포어(그리고 그 안의 reserve 예약분)가
 HikariCP 커넥션 풀 고갈 상황에서 실제로 의미 있는 보호 효과를 내는지
@@ -146,3 +146,78 @@ reserve=0(permits=10, C)이 reserve=2(permits=8, B)보다 오히려 평균
 (3) 반복 시행으로 재실험하는 게 필요하다 — 이번 스코프에서는 "세마포어
 유무"의 효과를 입증하는 것까지가 확실한 성과이고, reserve 세부 튜닝은
 추가 실험 과제로 남긴다.
+
+## k6 실행 결과 (repo-detail.js, stages 적용 후)
+
+세마포어가 정상 활성화된 상태(reserve=2, permits=8)에서 개선된
+`repo-detail.js`(10s ramp-up → 30s steady 10 VUs → 10s ramp-down,
+`useSemaphore` 개념과 무관하게 `GET /api/repos/62` 자체를 부하 대상으로 함)를
+`k6 run --out influxdb=http://localhost:8086/loadtest repo-detail.js`로 실행.
+
+### 터미널 원문 (요약)
+
+```
+✓ 'p(95)<500' p(95)=285.21ms
+✓ 'rate<0.01' rate=0.00%
+
+checks_total.......: 371     checks_succeeded...: 100.00% (371/371)
+
+http_req_duration: avg=109.27ms min=7.61ms med=37.7ms max=3.26s
+                   p(90)=189.45ms p(95)=285.21ms
+http_req_failed:   0.00% (0/371)
+http_reqs:         371   7.277143/s
+vus_max:           10
+iterations:        371   7.277143/s
+```
+
+두 threshold(`p(95)<500ms`, `rate<0.01`) 모두 통과. 실패 0건.
+
+### 대조 발견 — Grafana 표시값이 이 실행의 값이 아니었다
+
+k6 실행 직후 열어본 K6 Dashboard(Grafana)에 `Average Response: 246.29ms`,
+`Max Response: 3.26s`, `Request Made: 168`이 떴다. 처음엔 "Grafana가 다른
+집계 시간창을 써서 평균이 다르게 나온 것"으로 추정했으나, **InfluxDB
+원본을 직접 조회해서 확인한 결과 그 추정은 틀렸다**:
+
+```sql
+-- InfluxDB에 실제로 존재하는 name='repo-detail' 레코드 전체
+SELECT count("value") FROM "http_req_duration" WHERE "name" = 'repo-detail'
+→ 168개 (전체 기간 통틀어 168개뿐, 여러 런의 합산이 아니라 이게 전부)
+
+SELECT mean("value"), max("value"), min("value")
+FROM "http_req_duration" WHERE "name" = 'repo-detail'
+→ mean=134.59ms, max=3261.6656ms(=3.26s), min=7.6122ms(=7.61ms)
+```
+
+`min`(7.61ms)과 `max`(3.2616s)는 터미널 출력과 **정확히 일치**한다 —
+즉 InfluxDB에 쌓인 168개는 방금 그 실행과 **같은 런**이 맞다. 그런데
+터미널은 `http_reqs=371`, `iterations=371`이라고 보고했는데 InfluxDB엔
+168개(약 45%)만 도착했다. **약 55%의 데이터 포인트가 k6 → InfluxDB
+전송 과정에서 유실됐다.** (평균값 차이도 이걸로 설명된다: 유실된 표본이
+무작위가 아니라면 mean이 109.27ms → 134.59ms로 달라질 수 있다.)
+
+원인은 확정하지 못함(추가 조사 필요) — 가능성 후보:
+- k6의 InfluxDB v1 출력(xk6-output-influxdb)은 내부적으로 일정 주기로
+  메트릭을 배치 flush하는데, 짧은 테스트(총 50초)에서 마지막 배치가
+  프로세스 종료 전에 다 못 나가고 버려졌을 가능성
+- InfluxDB 1.8 쓰기 처리량이 순간적으로 못 따라가 일부 쓰기가 조용히
+  실패했을 가능성(k6는 출력 실패를 기본적으로 test 실패로 만들지 않음)
+
+**실무 시사점**: k6 터미널 요약(`k6 run`이 그 자리에서 보여주는 값)이
+threshold 판정의 기준이자 **가장 신뢰할 수 있는 원본**이고, Grafana는
+그걸 보조하는 시각화일 뿐 — 이번처럼 전송 유실이 있으면 Grafana 쪽 숫자가
+더 적게/다르게 나올 수 있다는 걸 실측으로 확인했다. CI에서 pass/fail을
+판단할 땐 반드시 k6 자체의 exit code/threshold 결과를 기준으로 삼아야
+하고, Grafana 대시보드 숫자를 판정 근거로 쓰면 안 된다.
+
+### 해석 요약
+
+- **threshold 통과**: `p(95)=285.21ms < 500ms`, `실패율 0% < 1%` — 오늘
+  세마포어 활성 상태의 API가 실무 기준 회귀 게이트를 통과하는 "건강한
+  상태"임을 자동 판정으로 확인
+- **max=3.26s 아웃라이어**: p95는 통과했지만 최댓값 하나가 유독 크다.
+  원인 미확인(추가 조사 필요) — 첫 요청의 JIT/커넥션 풀 워밍업, 혹은
+  그 순간 우연히 다른 부하가 겹쳤을 가능성 등 후보만 있고 확정 안 됨
+- **k6 → InfluxDB 데이터 유실(약 55%)**: 이번 세션에서 새로 발견한
+  이슈. 판정은 항상 k6 자체 출력 기준으로 하고, Grafana는 참고용으로만
+  쓸 것

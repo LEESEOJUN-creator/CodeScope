@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
  * EmbedConsumer의 실제 임베딩 작업(README 다운로드 + 청킹 + Ollama 호출 +
  * DB 저장)을 poll 스레드에서 분리해 수행하는 전용 워커 풀.
  *
- * 왜 필요한가(Day 26 트러블슈팅 참고 - docs/troubleshooting.md):
+ * 왜 필요한가(docs/troubleshooting.md 참고):
  *   기존에는 @KafkaListener 메서드(poll 스레드)가 이 작업을 전부 동기로
  *   수행했다. README가 극단적으로 긴 레포는 청크가 수십~수백 개라 총
  *   처리 시간이 max.poll.interval.ms를 넘겼고, poll()이 그만큼 오래
@@ -33,8 +33,8 @@ import java.util.concurrent.TimeUnit;
  * "임베딩 처리 자체의 실패"는 워커 스레드 안에서 별도로 재시도한다
  * (EmbedConsumer 참고).
  *
- * 왜 pool-size 기본값 6인가: Ollama 세마포어(permits=4, 2026-08-15
- * 실측 확정치)가 실제 동시 호출 수를 이미 제한하고 있으므로, 워커
+ * 왜 pool-size 기본값 6인가: Ollama 세마포어(permits=4, 실측 확정치)가
+ * 실제 동시 호출 수를 이미 제한하고 있으므로, 워커
  * 스레드 자체는 세마포어보다 약간 많게 둬 세마포어 대기 중인 스레드가
  * 있어도 다른 작업을 계속 받을 수 있게 한다.
  */

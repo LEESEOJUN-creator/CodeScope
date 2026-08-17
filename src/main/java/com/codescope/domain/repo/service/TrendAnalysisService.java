@@ -17,11 +17,10 @@ import java.time.format.DateTimeFormatter;
 /**
  * "왜 이 레포가 뜨는가"를 LLM으로 분석한다.
  *
- * 캐싱: Day 12에서 확정한 캐싱 3조건(읽기 빈도 높음 + 갱신 시점 예측
- * 가능 + 약간의 지연 허용)을 그대로 적용 — 트렌드 분석은 조건을 충족하므로
- * TTL 1시간 캐싱 대상. "인기 레포만" 조건부 캐싱 대신 TTL 일괄 적용
- * 원칙도 동일하게 재사용(RedisConfig의 defaultCacheConfig가 모든 캐시에
- * 동일 TTL 적용).
+ * 캐싱: 캐싱 3조건(읽기 빈도 높음 + 갱신 시점 예측 가능 + 약간의 지연 허용)을
+ * 트렌드 분석도 충족하므로 TTL 1시간 캐싱 대상. "인기 레포만" 조건부 캐싱
+ * 대신 TTL 일괄 적용 원칙도 동일하게 재사용(RedisConfig의 defaultCacheConfig가
+ * 모든 캐시에 동일 TTL 적용).
  *
  * 왜 캐시와 별개로 TrendScore에도 영구 저장하는가: Redis 캐시는 TTL
  * 만료 시 사라지는 휘발성 저장소다. 분석 결과를 나중에(캐시 만료 후에도)
@@ -39,12 +38,11 @@ public class TrendAnalysisService {
     private final TrendScoreJpaRepository trendScoreJpaRepository;
     private final LlmClient llmClient;
 
-    // 왜 캐시 미스 때마다 LLM을 다시 호출하는가(TrendScore에 이미
-    // analysisText가 있어도 재사용하지 않는 이유): Day 12 원칙대로
-    // "TTL 일괄 적용"만으로 갱신 주기를 통제하는 단순한 구조를 유지한다.
-    // TTL(1시간)이 지나야 캐시가 비므로, 그 시점에 최신 star/fork 수
-    // 기준으로 분석을 다시 생성하는 것이 "왜 지금 뜨는가"라는 질문의
-    // 취지에도 더 맞는다(오래된 분석을 그대로 재사용하면 통계가 낡음).
+    // 왜 캐시 미스 때마다 LLM을 다시 호출하는가(TrendScore에 이미 analysisText가
+    // 있어도 재사용하지 않는 이유): "TTL 일괄 적용"만으로 갱신 주기를 통제하는
+    // 단순한 구조를 유지한다. TTL(1시간)이 지나야 캐시가 비므로, 그 시점에
+    // 최신 star/fork 수 기준으로 분석을 다시 생성하는 것이 "왜 지금 뜨는가"라는
+    // 질문의 취지에도 더 맞는다.
     @Cacheable(value = "trendAnalysis", key = "#repoId")
     public TrendAnalysisResponse analyze(Long repoId) {
         GithubRepository repository = githubRepositoryJpaRepository.findById(repoId)
@@ -70,17 +68,13 @@ public class TrendAnalysisService {
     // 언어, 최근 갱신 시각(BaseEntity.updatedAt). 커밋 이력·릴리스
     // 빈도 같은 세부 지표는 아직 수집하지 않아(Kafka 파이프라인이
     // GitHub 검색 API 응답 필드만 저장) 프롬프트에 포함할 수 없다.
-    // 왜 "반드시 한국어로만 답하라"를 명시하는가: RepoRecommendService와
-    // 동일한 실측 계기(docs/troubleshooting.md Day 26+27) — 이 프롬프트도
-    // 지금까지는 한국어로 써있으니 응답도 당연히 한국어일 거라 암묵적으로
-    // 기대했을 뿐, 명시적 제약이 없었다.
-    // 왜 설명 번역을 별도 LLM 호출이 아니라 이 프롬프트에 얹는가(2026-08-16):
-    //   레포 하나당 생성 호출이 이미 90~160초 걸린다(CPU 추론 한계, 실측
-    //   문서화됨). 트렌드 카드 목록(9~12개)마다 설명을 개별 번역하면
-    //   그 개수만큼 90초씩 늘어나 비현실적이다. 이미 만들고 있는 "왜
-    //   뜨는가" 분석 호출 한 번에 번역을 앞부분으로 얹으면 추가 호출
-    //   없이 자연스럽게 해결된다 — 상세 페이지(레포 1개)에서만 쓰이므로
-    //   목록 화면의 N배 비용 문제가 애초에 없다.
+    // 왜 "반드시 한국어로만 답하라"를 명시하는가(docs/troubleshooting.md 참고):
+    // RepoRecommendService와 동일한 실측 계기 — 프롬프트가 한국어로 써있으니
+    // 응답도 당연히 한국어일 거라 암묵적으로 기대했을 뿐, 명시적 제약이 없었다.
+    // 왜 설명 번역을 별도 LLM 호출이 아니라 이 프롬프트에 얹는가: 레포 하나당
+    // 생성 호출이 이미 90~160초 걸린다(CPU 추론 한계). 목록마다 설명을 개별
+    // 번역하면 그 개수만큼 늘어나 비현실적이라, 이미 만들고 있는 "왜 뜨는가"
+    // 분석 호출 한 번에 번역을 앞부분으로 얹어 추가 호출 없이 해결한다.
     private String buildPrompt(GithubRepository repository) {
         StringBuilder sb = new StringBuilder();
         sb.append("당신은 오픈소스 트렌드 분석가입니다. 아래 GitHub 레포 지표를 보고, ");

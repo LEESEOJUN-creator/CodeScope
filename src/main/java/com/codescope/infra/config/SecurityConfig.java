@@ -33,7 +33,7 @@ public class SecurityConfig {
         http
                 .csrf(csrf -> csrf.disable())
                 // CorsConfig의 CorsConfigurationSource Bean을 그대로 사용한다
-                // (Day 30~31: 프론트엔드 localhost:3000 → 백엔드 credentials 포함 요청 허용)
+                // (프론트엔드 localhost:3000 → 백엔드 credentials 포함 요청 허용)
                 .cors(Customizer.withDefaults())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> {
@@ -56,14 +56,11 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/recommend").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/trends/**").permitAll();
 
-                    // Day 35: 부하테스트 엔드포인트는 인증 없이 호출 가능해야
-                    // JMeter/k6가 직접 두드릴 수 있다. 단 이 허용 규칙은 test
-                    // 프로파일에서만 적용되어, 운영 환경에서는 이 엔드포인트
-                    // 자체가 존재하지 않는다(컨트롤러가 @Profile("test")라
-                    // 빈 등록 자체가 안 됨). SecurityConfig가 프로파일과 무관하게
+                    // 부하테스트 엔드포인트는 인증 없이 호출 가능해야 JMeter/k6가
+                    // 직접 두드릴 수 있다. SecurityConfig는 프로파일과 무관하게
                     // 항상 로드되므로, permitAll 규칙 자체도 test 프로파일일 때만
-                    // authorizeHttpRequests에 추가해 운영 환경 설정에는 이 규칙의
-                    // 흔적조차 남기지 않는다(컨트롤러 부재 + 규칙 부재 이중 방어).
+                    // 추가해 운영 환경엔 이 규칙의 흔적조차 남기지 않는다
+                    // (컨트롤러도 @Profile("test")라 빈 부재 + 규칙 부재 이중 방어).
                     if (environment.acceptsProfiles(Profiles.of("test"))) {
                         auth.requestMatchers(HttpMethod.POST, "/api/test/**").permitAll();
                     }

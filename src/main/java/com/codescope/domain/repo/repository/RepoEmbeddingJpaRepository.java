@@ -25,16 +25,14 @@ public interface RepoEmbeddingJpaRepository extends JpaRepository<RepoEmbedding,
             """, nativeQuery = true)
     List<RepoEmbedding> findNearestByEmbedding(@Param("queryVector") String queryVector, @Param("limit") int limit);
 
-    // 왜 findNearestByEmbedding과 별도 메서드로 나눴는가(2026-08-16):
-    //   위 메서드는 Day 24 pgvector 코사인 유사도 자체가 정상 동작하는지
-    //   검증하는 테스트(RepoEmbeddingSimilarityTest)가 그대로 쓰고 있어
-    //   변경하면 그 테스트의 전제가 깨진다. 반면 CLAUDE.md 원칙상 RAG
-    //   추천 쿼리는 "반드시 status=EMBEDDED만" 필터링해야 하는데(예:
-    //   과거엔 EMBEDDED였다가 이후 재시도 실패로 FAILED가 된 레포도
-    //   repo_embeddings엔 옛 벡터가 그대로 남아있어, 필터링 없이 쓰면
-    //   추천에 섞여 들어갈 수 있음을 2026-08-15 실측으로 확인) — pgvector
-    //   검증용(순수 벡터 로직 확인)과 실제 추천 비즈니스 로직용(현재
-    //   상태까지 반영)의 관심사가 다르므로 쿼리 자체를 분리했다.
+    // 왜 findNearestByEmbedding과 별도 메서드로 나눴는가:
+    //   위 메서드는 pgvector 코사인 유사도 자체가 정상 동작하는지 검증하는
+    //   테스트(RepoEmbeddingSimilarityTest)가 그대로 쓰고 있어 변경하면 그
+    //   테스트의 전제가 깨진다. 반면 CLAUDE.md 원칙상 RAG 추천 쿼리는
+    //   "반드시 status=EMBEDDED만" 필터링해야 하는데(과거엔 EMBEDDED였다가
+    //   재시도 실패로 FAILED가 된 레포도 repo_embeddings엔 옛 벡터가 남아있어
+    //   필터링 없이 쓰면 추천에 섞여 들어갈 수 있음을 실측으로 확인) — pgvector
+    //   검증용과 실제 추천 비즈니스 로직용의 관심사가 다르므로 분리했다.
     @Query(value = """
             SELECT re.* FROM repo_embeddings re
             JOIN github_repository gr ON gr.github_repository_id = re.repo_id

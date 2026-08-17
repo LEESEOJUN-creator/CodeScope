@@ -21,7 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * Day 28~29: UserFavorite API 통합 테스트.
+ * UserFavorite API 통합 테스트.
  * 실제 요구사항: 인증된 사용자로 즐겨찾기 추가 → 조회 → 삭제가 실제로 동작하는지,
  * 그리고 사용자 A가 추가한 즐겨찾기가 사용자 B 목록에 섞이지 않는지 확인한다.
  *

@@ -17,7 +17,7 @@ public interface EmbeddingService {
     /**
      * 검색 질의(사용자 스택 텍스트 등)를 임베딩한다.
      *
-     * 왜 embed()와 분리된 메서드인가(2026-08-16, Day 26+27): embed()는
+     * 왜 embed()와 분리된 메서드인가: embed()는
      * "저장할 문서"용 prefix("search_document: ")가 구현체
      * 내부에 하드코딩돼 있다(OllamaEmbeddingService 참고). nomic-embed-text는
      * 문서와 질의를 서로 다른 벡터 공간으로 학습한 모델이라, 검색

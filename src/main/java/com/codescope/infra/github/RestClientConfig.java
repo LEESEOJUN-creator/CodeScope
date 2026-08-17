@@ -25,9 +25,9 @@ public class RestClientConfig {
     ) {
         // 왜 타임아웃을 명시하는가: 기본 RestClient는 connect/read
         // 타임아웃이 무제한이라, GitHub 쪽 응답이 지연되면 이 요청을
-        // 부른 스레드가 무한정 대기한다(2026-08-15 EmbedConsumer 워커
-        // 스레드가 정확히 이 상태로 멈춰있는 것을 실측으로 확인).
-        // 값 근거는 application.yaml 주석 참고.
+        // 부른 스레드가 무한정 대기한다(EmbedConsumer 워커 스레드가
+        // 정확히 이 상태로 멈춰있는 것을 실측으로 확인). 값 근거는
+        // application.yaml 주석 참고.
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(Duration.ofMillis(connectTimeoutMs));
         requestFactory.setReadTimeout(Duration.ofMillis(readTimeoutMs));

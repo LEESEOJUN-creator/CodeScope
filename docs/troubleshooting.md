@@ -9,17 +9,17 @@
 - [GitHub OAuth + JWT + Redis Refresh Token Rotation](#github-oauth--jwt--redis-refresh-token-rotation)
 - [DB 세마포어 배압 제어 실측](#db-세마포어-배압-제어-실측)
 - [가상 스레드 Pinning 실측 (JFR jdk.VirtualThreadPinned)](#가상-스레드-pinning-실측-jfr-jdkvirtualthreadpinned)
-- [Kafka 파이프라인 인프라·연동 트러블슈팅 (Day 18-21)](#kafka-파이프라인-인프라연동-트러블슈팅-day-18-21)
+- [Kafka 파이프라인 인프라·연동 트러블슈팅](#kafka-파이프라인-인프라연동-트러블슈팅)
   1. [bitnami/kafka Docker Hub 정책 변경으로 인한 ImagePullBackOff](#1-bitnamikafka-docker-hub-정책-변경으로-인한-imagepullbackoff)
   2. [Kafka 브로커 OOMKilled (메모리 512Mi 부족)](#2-kafka-브로커-oomkilled-메모리-512mi-부족)
   3. [`__consumer_offsets` 내부 토픽 replication factor 불일치](#3-__consumer_offsets-내부-토픽-replication-factor-불일치)
   4. [로컬 개발 환경에서 K8s 내부 Kafka 접근 시 advertised.listeners DNS 해석 실패](#4-로컬-개발-환경에서-k8s-내부-kafka-접근-시-advertisedlisteners-dns-해석-실패)
   5. [GitHub Personal Access Token 만료로 인한 401 Bad Credentials](#5-github-personal-access-token-만료로-인한-401-bad-credentials)
   6. [Kafka 컨슈머 커밋 로직의 finally 블록 오류](#6-kafka-컨슈머-커밋-로직의-finally-블록-오류)
-- [Day 26: EmbedConsumer 구조적 한계 — poll 스레드 동기 처리로 인한 리밸런싱](#day-26-embedconsumer-구조적-한계--poll-스레드-동기-처리로-인한-리밸런싱)
-- [Day 26 (근본 리팩토링): EmbedConsumer poll 스레드 분리 + RestClient 타임아웃 실측 검증](#day-26-근본-리팩토링-embedconsumer-poll-스레드-분리--restclient-타임아웃-실측-검증)
-- [Day 26+27: RAG 레포 추천(RepoRecommendService) 구현 및 llama3.2:3b 반복 생성 열화 실측](#day-2627-rag-레포-추천repo-recommendservice-구현-및-llama323b-반복-생성-열화-실측)
-- [Day 26+27: nomic-embed-text 한국어 검색 한계 발견](#day-2627-nomic-embed-text-한국어-검색-한계-발견)
+- [EmbedConsumer 구조적 한계 — poll 스레드 동기 처리로 인한 리밸런싱](#embedconsumer-구조적-한계--poll-스레드-동기-처리로-인한-리밸런싱)
+- [EmbedConsumer poll 스레드 분리 + RestClient 타임아웃 실측 검증 (근본 리팩토링)](#embedconsumer-poll-스레드-분리--restclient-타임아웃-실측-검증-근본-리팩토링)
+- [RAG 레포 추천(RepoRecommendService) 구현 및 llama3.2:3b 반복 생성 열화 실측](#rag-레포-추천repo-recommendservice-구현-및-llama323b-반복-생성-열화-실측)
+- [nomic-embed-text 한국어 검색 한계 발견](#nomic-embed-text-한국어-검색-한계-발견)
 
 ## N+1 문제 재현 및 해결 (Fetch Join)
 
@@ -48,12 +48,7 @@
 
 **주의**: 실행 시간(ms) 단위의 성능 비교는 이번 테스트의 duration에 스프링
 컨텍스트 로딩/스키마 재생성 시간이 포함되어 있어 신뢰할 수 없음. 실제 응답
-시간 개선 수치는 Day32 JMeter 부하테스트에서 별도 실측 예정.
-
-### 관련 테스트
-
-- `GithubRepositoryTopicNPlusOneTest` / `GithubRepositoryTopicFetchJoinTest` — 소규모(레포 5개) 재현/해결
-- `GithubRepositoryTopicNPlusOneScaleTest` / `GithubRepositoryTopicFetchJoinScaleTest` — 대량(레포 100개) 재현/해결
+시간 개선 수치는 JMeter 부하테스트에서 별도 실측 예정.
 
 ## 동적 검색 조건 처리 및 컬렉션 fetch 전략
 
@@ -77,10 +72,6 @@ N+1 해결 사례에서 확인했듯 Hibernate가 메모리 페이징을 하게 
 SQL 로그 상 topics 조회 쿼리가 3번(N+1)이 아니라 `WHERE repo_id = any(?)`
 형태의 배치 쿼리 1번으로 나감을 확인. 메인 검색 쿼리는 offset/limit이
 정상적으로 SQL 레벨에서 걸림(컬렉션 join이 없어서 메모리 페이징 문제 없음).
-
-### 관련 테스트
-
-- `GithubRepositoryQueryRepositoryTest#search_결과_topics_LAZY_로딩_배치조회` — `@BatchSize` 배치 쿼리 검증
 
 ### 페이지네이션 검증
 
@@ -113,14 +104,9 @@ Logback `ListAppender`를 `org.hibernate.SQL` 로거에 붙여 `search()` 실행
 SQL 로그로 확인됨. 위 측정 결과 서술의 "limit/offset" 표현은 실제 생성되는
 구문에 맞춰 "offset/fetch"(ANSI 표준 구문)로 정정.
 
-### 관련 테스트 (페이지네이션)
-
-- `GithubRepositoryQueryRepositoryPaginationTest` — 9개 케이스 전부 통과,
-  기존 테스트 회귀 없음
-
 ### DB 인덱스 적용 전/후 비교
 
-**목적**: Day 9 QueryDSL 동적 검색 조건(`language`, `star_count`)에 대해, 인덱스
+**목적**: QueryDSL 동적 검색 조건(`language`, `star_count`)에 대해, 인덱스
 유무가 실제 쿼리 실행 방식과 성능에 어떤 영향을 주는지 실측 검증.
 
 **측정 환경**: `github_repository` 테이블에 더미 데이터 100,000건(language 6종
@@ -182,17 +168,17 @@ Filter가 완전히 사라진 것(인덱스가 실제로 활용되고 있다는 
 
 **결론**: 인덱스 적용으로 Seq Scan(전체 스캔+필터링)에서 Bitmap Heap
 Scan/BitmapAnd(조건에 맞는 행만 직접 조회)로 전환됨을 확인. 단일 컬럼 인덱스
-2개 조합만으로 동적 검색 조건(Day 9 QueryDSL)의 다양한 조합에 유연하게 대응
+2개 조합만으로 동적 검색 조건(QueryDSL)의 다양한 조합에 유연하게 대응
 가능.
 
 ## Flyway 마이그레이션 도입
 
 **문제/배경**: `ddl-auto: create-drop` 방식으로 스키마를 운영해오면서, Spring
 Boot 앱이 재시작될 때마다 Hibernate가 스키마를 drop 후 재생성하는 문제가
-있었음. Day 10 인덱스 실측 도중 앱이 꺼진 상태에서 테이블 자체가 없어서
+있었음. 인덱스 실측 도중 앱이 꺼진 상태에서 테이블 자체가 없어서
 raw DDL로 스키마를 임시로 재현해야 했던 사례가 실제 계기가 됨. 원래 계획은
-4주차(pgvector 전환 시) Flyway 도입이었으나, 그 시점엔 테이블이 더 많고
-실데이터도 쌓여 스키마 역산이 어려워지므로 2주차로 조기 도입.
+pgvector 전환 시점의 Flyway 도입이었으나, 그 시점엔 테이블이 더 많고
+실데이터도 쌓여 스키마 역산이 어려워지므로 조기 도입.
 
 **적용 내용**:
 - `build.gradle`: `flyway-core`, `flyway-database-postgresql` 의존성 추가
@@ -204,7 +190,7 @@ raw DDL로 스키마를 임시로 재현해야 했던 사례가 실제 계기가
   - FK 제약 9개, UNIQUE 제약 7개, CHECK 제약 2개(`process_status`,
     `issues.state` — 각 엔티티 실제 enum 값과 대조 검증 완료), `repo_topic`
     복합 PK(엔티티 애노테이션엔 없으나 중복 방지 목적으로 추가)
-  - Day 10에서 실측 검증된 인덱스 2개(`idx_repo_language`,
+  - 실측 검증된 인덱스 2개(`idx_repo_language`,
     `idx_repo_star_count`) 포함
 - `V1__init.sql`은 스키마(DDL)만 포함하며 데이터 INSERT는 없음 (적용 직후
   9개 테이블은 모두 빈 상태)
@@ -212,7 +198,7 @@ raw DDL로 스키마를 임시로 재현해야 했던 사례가 실제 계기가
 **트러블슈팅 - 최초 적용 시도 실패**:
 - 문제: `Found non-empty schema(s) "public" but no schema history table.`
   에러 발생
-- 원인: 라이브 DB에 이전(Day 10) raw DDL로 만든 `github_repository` 테이블이
+- 원인: 라이브 DB에 이전에 raw DDL로 만든 `github_repository` 테이블이
   삭제 안 된 채 남아있었음. Flyway는 `flyway_schema_history` 기록 없이
   기존 스키마가 존재하면, 의도치 않은 덮어쓰기를 막기 위해 실행을 중단함
 - 해결: `baselineOnMigrate` 같은 우회 설정을 쓰지 않고, 남은 테이블을
@@ -244,7 +230,7 @@ raw DDL로 스키마를 임시로 재현해야 했던 사례가 실제 계기가
   전환이 필요하며, 이는 현재 매니페스트에 주석으로 계획되어 있음
   (아직 미적용 상태)
 
-**추가 발견 및 조치 (V2)**: Day 9~10에서 실제 쿼리 패턴과 인덱스 커버리지를
+**추가 발견 및 조치 (V2)**: 실제 쿼리 패턴과 인덱스 커버리지를
 전수 대조한 결과, `IssueJpaRepository.findByRepositoryId()`가 조회하는
 `issues.repo_id` 컬럼에 인덱스가 없음을 확인. FK 제약은 있었으나 PostgreSQL은
 FK에 자동으로 인덱스를 만들지 않으므로 Seq Scan이 되는 공백이었음.
@@ -367,14 +353,6 @@ key="#id")`, `delete`에 `@CacheEvict(value="popularRepos", key="#id")` 적용.
 **해결**: exclude 라인 제거 후 재기동, Redis 관련 자동설정이 정상
 활성화됨을 로그로 확인(Bootstrapping Spring Data Redis repositories).
 
-### 관련 테스트
-
-- `TrendServiceTest` — 2건 PASS(전체 0.574s). Sorted Set 점수 갱신
-  (100/250/80 → 9002/9001/9003 순서) 및 점수 역전(9003 +50 → 9002/9003/9001
-  순서로 변경) 검증
-- `DuplicateCheckServiceTest` — 1건 PASS(4.241s). 스레드 10개 동시 요청 시
-  락 획득 성공 1건/실패 9건(`AtomicInteger` 집계 기준) 검증
-
 ## GitHub OAuth + JWT + Redis Refresh Token Rotation
 
 ### Refresh Token 회전 시 조회·삭제 비원자성 (TOCTOU race condition)
@@ -390,7 +368,7 @@ key="#id")`, `delete`에 `@CacheEvict(value="popularRepos", key="#id")` 적용.
 교체해 조회+삭제를 원자적으로 처리. 불일치 분기의 중복 `delete()` 호출도
 함께 제거.
 
-**참고**: Day 12 `DuplicateCheckService`의 `setIfAbsent`(SET NX)와 동일 원칙
+**참고**: `DuplicateCheckService`의 `setIfAbsent`(SET NX)와 동일 원칙
 ("확인+점유는 원자적으로").
 
 **트레이드오프**: `getAndDelete`는 조회 시점에 무조건 삭제되므로, 새 토큰
@@ -496,13 +474,8 @@ HTTPS 배포 시 변경을 누락하면 토큰이 평문 전송 위험에 노출
 
 **미측정 항목**: `GET /api/repos/trending`의 쿼리 수 비교(`fetchByLoop` vs
 `fetchByBatch`)는 Redis Sorted Set(`trending:repos`)에 실제 데이터가 없어
-측정 보류. Kafka 수집 파이프라인(Day 18~20) 구축 후 실제 데이터로 측정
+측정 보류. Kafka 수집 파이프라인 구축 후 실제 데이터로 측정
 예정.
-
-### 관련 테스트
-
-현재 인증 플로우에 대한 자동화 테스트 클래스는 없음(위 검증 결과는 Swagger UI
-수동 호출 기준). 테스트 코드는 추후 별도 작업으로 추가 예정.
 
 ## DB 세마포어 배압 제어 실측
 
@@ -550,11 +523,6 @@ HTTPS 배포 시 변경을 누락하면 토큰이 평문 전송 위험에 노출
 - "안전성과 처리량은 트레이드오프"라는 가설이 이 실측에서는 기각됨.
 - `pendingMax` 지표가 예외 건수보다 먼저 위험 신호를 드러낸다는 것도
   1차 실측에서 확인됨.
-
-### 관련 테스트
-
-- `DbBackpressureLoadTest` — `세마포어_없이_실행` / `세마포어_적용_후_실행`,
-  `LOAD_SIZE`/`REPEAT_PER_THREAD`를 상수로 분리해 부하 조절 가능하도록 구성.
 
 ## 가상 스레드 Pinning 실측 (JFR jdk.VirtualThreadPinned)
 
@@ -632,13 +600,7 @@ threshold=0ms JFR 설정은 그대로 둔 채 `세마포어_없이_실행`을 �
   많아서"라는 이유만 있었다면, 이제 "가상 스레드 pinning을 유발할 수
   있다"는 근거가 추가됨.
 
-### 관련 태스크
-
-- `build.gradle`의 `dbBackpressureJfrTest` — `DbBackpressureLoadTest` 전용
-  JFR 진단 태스크(임시 진단용, 확인 끝나면 제거 예정). 기본 `test` 태스크에는
-  영향 없음.
-
-## Kafka 파이프라인 인프라·연동 트러블슈팅 (Day 18-21)
+## Kafka 파이프라인 인프라·연동 트러블슈팅
 
 k8s(kind) 위에 Kafka를 직접 올려 로컬 개발 환경에서 붙이는 과정부터,
 `GithubApiClient` → `CollectProducer` → `CollectConsumer` → `EmbedProducer`로
@@ -816,14 +778,7 @@ finally { ack.acknowledge(); }` 구조를 코드 리뷰로 검토 → `finally`�
 달라져야 하는 로직은 finally가 아니라 각 경로에서 명시적으로 처리해야
 한다.
 
-### 관련 파일
-
-- `k8s/base/kafka-statefulset.yaml`, `k8s/base/kafka-headless-service.yaml`
-  — 이슈 1~4 관련 최종 매니페스트
-- `src/main/java/com/codescope/infra/github/GithubApiClient.java` — 이슈 5
-- `src/main/java/com/codescope/kafka/consumer/CollectConsumer.java` — 이슈 6
-
-## Day 25: 로컬 실행 중 Kafka 리밸런싱 폭주 + DB "relation does not exist" 일시 오류
+## 로컬 실행 중 Kafka 리밸런싱 폭주 + DB "relation does not exist" 일시 오류
 
 Ollama 임베딩 연동 실측 검증을 위해 로컬(IntelliJ) 실행 + `kubectl
 port-forward`로 kind의 postgres/kafka에 붙여 장시간(약 30분 이상) 돌리던
@@ -900,9 +855,9 @@ Pod의 재시작 이력(`restartCount`, `startTime`, `Events`)부터 확정하�
 배포 환경(k3s)에서는 재현되지 않는다(Pod 내부 통신에는 로컬 전용
 port-forward 경로가 끼지 않음).
 
-## Day 26: EmbedConsumer 구조적 한계 — poll 스레드 동기 처리로 인한 리밸런싱
+## EmbedConsumer 구조적 한계 — poll 스레드 동기 처리로 인한 리밸런싱
 
-Day 25 사고와 별개로, 같은 로컬 환경(IntelliJ + `kubectl port-forward`)에서
+앞의 사고와 별개로, 같은 로컬 환경(IntelliJ + `kubectl port-forward`)에서
 DB/Redis를 완전히 비운 클린 상태로 30건 재수집을 처음부터 관찰하던 중
 `embed-group`이 반복적으로 리밸런싱되는 것을 실측으로 재현·확정했다.
 
@@ -963,8 +918,9 @@ Kafka가 죽은 컨슈머로 판단하지 않도록 함. **증상 완화일 뿐 
 
 대형 README 14건은 강제로 FAILED 처리하지 않고 그대로 둠 —
 `@RetryableTopic(attempts = "3")`으로 3회 소진 후 자연스럽게 DLT/FAILED로
-수렴하는 구조라 무한 재시도 루프 위험이 없음을 코드로 확인했고(Day 18-21
-6번 이슈에서 커밋 로직 자체는 이미 정상 처리되도록 고쳐진 상태), 데이터
+수렴하는 구조라 무한 재시도 루프 위험이 없음을 코드로 확인했고(Kafka
+파이프라인 트러블슈팅 6번 이슈에서 커밋 로직 자체는 이미 정상 처리되도록
+고쳐진 상태), 데이터
 유실 위험도 없어 컨슈머를 별도로 멈추지 않았다.
 
 **적용된 설정값(오늘 실측 기준으로 그대로 유지)**:
@@ -989,16 +945,7 @@ spring:
 `max.poll.interval.ms` 여유값(15분)이 "이 시점 기준 관측된 가장 느린
 레포"를 커버하는 임시 안전판 역할만 한다는 점을 인지하고 있어야 한다.
 
-### 관련 파일
-
-- `src/main/java/com/codescope/kafka/consumer/EmbedConsumer.java` —
-  poll 스레드 동기 처리 지점
-- `src/main/java/com/codescope/client/llm/OllamaEmbeddingService.java` —
-  청크 단위 순차 Ollama 호출 + 세마포어
-- `src/main/resources/application.yaml` — `codescope.ollama-semaphore.permits`,
-  `spring.kafka.consumer.properties.max.poll.interval.ms`
-
-## Day 26 (근본 리팩토링): EmbedConsumer poll 스레드 분리 + RestClient 타임아웃 실측 검증
+## EmbedConsumer poll 스레드 분리 + RestClient 타임아웃 실측 검증 (근본 리팩토링)
 
 위 항목의 "근본 해결" 과제를 실제로 구현하고 같은 날 실측 검증까지
 완료한 기록.
@@ -1105,21 +1052,9 @@ spring:
 유지). 남은 COLLECTED 14건(초대형 README)은 별도 조치 없이 다음 실행
 시 그대로 재개됨.
 
-### 관련 파일
+## RAG 레포 추천(RepoRecommendService) 구현 및 llama3.2:3b 반복 생성 열화 실측
 
-- `src/main/java/com/codescope/kafka/consumer/EmbedConsumer.java` —
-  워커 위임 + 인메모리 재시도
-- `src/main/java/com/codescope/infra/config/EmbedWorkerConfig.java` —
-  bounded 워커 풀 Bean(신규)
-- `src/main/java/com/codescope/infra/github/RestClientConfig.java`,
-  `src/main/java/com/codescope/client/llm/OllamaRestClientConfig.java` —
-  connect/read 타임아웃 추가
-- `src/main/resources/application.yaml` — `codescope.embed-worker.*`,
-  `github.api.*-timeout-ms`, `llm.ollama.*-timeout-ms`
-
-## Day 26+27: RAG 레포 추천(RepoRecommendService) 구현 및 llama3.2:3b 반복 생성 열화 실측
-
-Day 25(임베딩 파이프라인)에 이어 pgvector 유사도 검색 + LLM 생성을 묶은
+임베딩 파이프라인에 이어 pgvector 유사도 검색 + LLM 생성을 묶은
 RAG 추천(`RepoRecommendService`)과 트렌드 분석(`TrendAnalysisService`)을
 구현하고, 실제 로컬 인프라(Postgres/Ollama)로 통합 테스트까지 실행해
 검증한 기록.
@@ -1135,9 +1070,9 @@ RAG 추천(`RepoRecommendService`)과 트렌드 분석(`TrendAnalysisService`)�
   안 됨(nomic-embed-text는 문서/질의를 다른 벡터 공간으로 학습) — 질의
   전용 `search_query: ` prefix 메서드를 분리
 - `RepoEmbeddingJpaRepository.findNearestEmbeddedByEmbedding()` 신규
-  추가: 기존 `findNearestByEmbedding()`(Day 24 pgvector 검증 테스트가
-  사용 중이라 유지)은 `process_status` 필터가 없어, 과거 EMBEDDED였다가
-  이후 실패로 FAILED가 된 레포(2026-08-15 실측으로 존재 확인됨)도 섞여
+  추가: 기존 `findNearestByEmbedding()`(pgvector 검증 테스트가 사용 중이라
+  유지)은 `process_status` 필터가 없어, 과거 EMBEDDED였다가 이후 실패로
+  FAILED가 된 레포(실측으로 존재 확인됨)도 섞여
   나올 수 있음 — `github_repository`와 JOIN해 `status='EMBEDDED'`만
   걸러내는 별도 쿼리로 분리
 - `IssueRecommendService`는 스코프에서 제외(TODO로 `IssueJpaRepository`에
@@ -1251,32 +1186,12 @@ pgvector 검색 + LLM 생성 전체 포함).
 
 이번 검증 과정(약 1시간, 여러 차례 `./gradlew test` 재시도) 동안
 `kubectl port-forward`로 연결한 postgres/redis가 **3회** 별다른 예고
-없이 끊김을 반복 관찰. Day 25 트러블슈팅에서 이미 "로컬 전용 SPOF"로
+없이 끊김을 반복 관찰. 앞의 트러블슈팅에서 이미 "로컬 전용 SPOF"로
 지목된 문제가 이번에도 재현됨 — 매번 재연결로 대응했으나, 장시간 검증
 작업 전에는 port-forward 생존을 주기적으로 확인하는 습관이 필요함을
 재확인.
 
-### 관련 파일
-
-- `src/main/java/com/codescope/client/llm/LlmClient.java`,
-  `OllamaLlmClient.java`, `OllamaGenerationRequest.java`,
-  `OllamaGenerationResponse.java` — 생성 클라이언트(신규)
-- `src/main/java/com/codescope/client/llm/EmbeddingService.java`,
-  `OllamaEmbeddingService.java` — `embedQuery()` 추가
-- `src/main/java/com/codescope/domain/repo/service/RepoRecommendService.java`,
-  `TrendAnalysisService.java` — RAG 추천 / 트렌드 분석(신규)
-- `src/main/java/com/codescope/domain/repo/repository/RepoEmbeddingJpaRepository.java` —
-  `findNearestEmbeddedByEmbedding()` 추가
-- `src/main/java/com/codescope/api/controller/repo/RecommendController.java`,
-  `TrendAnalysisController.java` — 컨트롤러(신규)
-- `src/main/resources/db/migration/V4__add_trend_score_analysis_text.sql` —
-  `trend_scores.analysis_text` 컬럼 추가
-- `src/test/java/com/codescope/domain/repo/service/RepoRecommendServiceIntegrationTest.java` —
-  통합 테스트(신규)
-- `src/main/java/com/codescope/domain/repo/repository/IssueJpaRepository.java` —
-  IssueRecommendService 선행 과제 TODO 기록
-
-## Day 26+27: nomic-embed-text 한국어 검색 한계 발견
+## nomic-embed-text 한국어 검색 한계 발견
 
 생성(LLM) 쪽 다국어 섞임 문제를 조사하던 중, 사용자 질문("임베딩 쪽도
 깨지나?")을 계기로 임베딩 모델의 언어 처리 자체를 별도로 실측 검증함.

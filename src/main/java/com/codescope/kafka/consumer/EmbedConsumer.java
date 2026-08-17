@@ -24,10 +24,9 @@ import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 
-// Day 25: README 수집 + Ollama 임베딩 생성 + pgvector 저장까지 완성.
-// Day 26: poll 스레드 동기 처리로 인한 리밸런싱 폭주(docs/troubleshooting.md
-//   참고)를 근본 해결하기 위해, 실제 처리를 embedWorkerExecutor로 위임하는
-//   구조로 리팩토링.
+// README 수집 + Ollama 임베딩 생성 + pgvector 저장. poll 스레드 동기 처리로
+// 인한 리밸런싱 폭주(docs/troubleshooting.md 참고)를 막기 위해, 실제 처리는
+// embedWorkerExecutor로 위임하는 구조.
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -105,7 +104,7 @@ public class EmbedConsumer {
                 // 동일한 취지).
                 //
                 // IllegalStateException(doEmbed의 "레포가 DB에 없음")도 같은
-                // 분류다(2026-08-16 확인). CollectConsumer.consume()에는
+                // 분류다. CollectConsumer.consume()에는
                 // @Transactional이 없어 githubRepositoryJpaRepository.save()
                 // 호출 자체가 그 자리에서 즉시 커밋되는 독립 트랜잭션이고,
                 // embedProducer.publish()는 그 save()가 리턴된(=커밋 완료된)

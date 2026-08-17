@@ -24,28 +24,22 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Day 35 부하 테스트 전용. DB 세마포어(DbSemaphoreConfig)가 실제로 HikariCP
- * 커넥션 풀을 보호하는지 눈으로 확인하기 위한 트리거 엔드포인트.
+ * 부하 테스트 전용. DB 세마포어(DbSemaphoreConfig)가 실제로 HikariCP
+ * 커넥션 풀을 보호하는지 확인하기 위한 트리거 엔드포인트.
  *
- * 왜 GithubRepositoryService.getById()가 아니라 이 엔드포인트에만 세마포어를
- * 붙였는가(사용자 확정 결정, 2026-08-17): GET /api/repos/{id}는 의도적으로
- * 세마포어를 거치지 않는 경로로 유지한다. 이는 세마포어를 직접 거치는 요청
- * 간 경합이 아니라, 세마포어와 무관한 가벼운 조회조차 DB 커넥션 풀(HikariCP)
- * 고갈의 간접 영향을 받는지를 확인하기 위함이다. 즉 세마포어가 보호하는 것은
- * 특정 요청이 아니라 HikariCP 커넥션 풀이라는 공유 자원 자체다 — 그래서 부하
- * 테스트 시나리오는 이 엔드포인트로 세마포어 보호 구간에 배치성 부하를 걸어
- * 두고, JMeter/k6는 별도로 GET /api/repos/{id}를 반복 호출해 "세마포어를
- * 안 거치는 가벼운 조회가 풀 고갈의 영향을 받는지"를 관찰한다.
+ * GET /api/repos/{id}는 의도적으로 세마포어를 거치지 않는 경로로 유지한다.
+ * 세마포어가 보호하는 건 특정 요청이 아니라 HikariCP 커넥션 풀이라는 공유
+ * 자원 자체이므로, 이 엔드포인트로 세마포어 보호 구간에 배치성 부하를 걸어두고
+ * JMeter/k6는 별도로 GET /api/repos/{id}를 반복 호출해 "세마포어를 안 거치는
+ * 가벼운 조회가 풀 고갈의 영향을 받는지"를 관찰한다.
  *
- * 왜 세마포어만이 아니라 진짜 DB 커넥션도 잡는가: 세마포어 permit만 쥐고
- * 실제 커넥션을 안 쓰면 HikariCP 풀에는 아무 압력도 안 생겨 실험 자체가
- * 무의미해진다. DataSource에서 커넥션을 직접 얻어 Postgres의 pg_sleep()으로
- * DB 서버 쪽에서까지 실제로 durationMs를 점유하게 한다 — JPA/Hibernate를
- * 거치지 않는 이유는 이 엔드포인트의 목적이 "커넥션 점유 재현"이지 실제
- * 도메인 쿼리가 아니기 때문(단순할수록 재현이 정확함).
+ * 세마포어 permit만 쥐고 실제 커넥션을 안 쓰면 풀에 압력이 안 생겨 실험이
+ * 무의미해지므로, DataSource에서 커넥션을 직접 얻어 Postgres의 pg_sleep()으로
+ * durationMs만큼 실제 점유한다. JPA/Hibernate를 거치지 않는 이유는 목적이
+ * "커넥션 점유 재현"이지 실제 도메인 쿼리가 아니기 때문.
  */
 @Slf4j
-@Tag(name = "LoadTest", description = "Day 35 부하 테스트 전용 - 운영 환경 미노출(@Profile(\"test\"))")
+@Tag(name = "LoadTest", description = "부하 테스트 전용 - 운영 환경 미노출(@Profile(\"test\"))")
 @RestController
 @RequestMapping("/api/test")
 @Profile("test")
@@ -61,13 +55,10 @@ public class LoadTestController {
     public ResponseEntity<ApiResponse<BatchLoadResult>> simulateBatchLoad(
             @RequestParam int count,
             @RequestParam long durationMs,
-            // 실험 A(세마포어 없음)/B(세마포어 있음) 대조군 실험용 토글(2026-08-17 추가).
-            // 기존엔 이 엔드포인트가 항상 세마포어를 거쳐 "세마포어 있음/없음"을 같은
-            // 엔드포인트로 비교할 방법이 없었다(GET /api/repos/{id}는 애초에 세마포어와
-            // 무관한 별개 경로라 대조군이 될 수 없었음 — 이 문제로 그 이전 실험 A/B 결과 폐기).
+            // 세마포어 있음/없음을 같은 엔드포인트로 직접 대조하기 위한 토글.
             // false일 때 dbSemaphore.acquire()/release()를 건너뛰어, count가
-            // permits(=maximumPoolSize-reserve)를 넘으면 HikariCP connection-timeout(기본 30s)으로
-            // 실패가 발생하는 무방비 상태를 그대로 재현한다.
+            // permits(=maximumPoolSize-reserve)를 넘으면 HikariCP connection-timeout
+            // (기본 30s)으로 실패가 발생하는 무방비 상태를 그대로 재현한다.
             @RequestParam(defaultValue = "true") boolean useSemaphore
     ) throws InterruptedException {
         log.info("배치 부하 시뮬레이션 시작: count={}, durationMs={}, useSemaphore={}", count, durationMs, useSemaphore);

@@ -29,8 +29,8 @@ public class TrendScore extends BaseEntity {
     @Column(nullable = false)
     private LocalDateTime calculatedAt;
 
-    // V4: Day 26+27 TrendAnalysisService가 생성한 "왜 이 레포가 뜨는가"
-    // LLM 분석 텍스트. score(정렬용 숫자)와 별개 개념이라 컬럼을 분리했다.
+    // V4: TrendAnalysisService가 생성한 "왜 이 레포가 뜨는가" LLM 분석 텍스트.
+    // score(정렬용 숫자)와 별개 개념이라 컬럼을 분리했다.
     @Column(columnDefinition = "TEXT")
     private String analysisText;
 

@@ -54,9 +54,8 @@ class EmbedConsumerTest {
     @Mock
     private Acknowledgment ack;
 
-    // Day 26 리팩토링으로 EmbedConsumer 생성자에 추가된 의존성. 이 Mock이
-    // 빠져 있으면 @InjectMocks가 이 자리를 null로 채워, consume() 호출 시
-    // NullPointerException이 난다(2026-08-16 전체 테스트 실행 중 실측 발견).
+    // EmbedConsumer 생성자 의존성. 이 Mock이 빠져 있으면 @InjectMocks가
+    // 이 자리를 null로 채워, consume() 호출 시 NullPointerException이 난다.
     @Mock
     private ExecutorService embedWorkerExecutor;
 
@@ -125,7 +124,7 @@ class EmbedConsumerTest {
     }
 
     @Test
-    @DisplayName("레포가 DB에 없으면 재시도 없이 즉시 실패 확정하고 ack한다(2026-08-16: 4xx와 동일하게 재시도 분류에서 제외)")
+    @DisplayName("레포가 DB에 없으면 재시도 없이 즉시 실패 확정하고 ack한다(4xx와 동일하게 재시도 분류에서 제외)")
     void consume_레포_없으면_재시도_없이_즉시_FAILED_확정() {
         // given
         given(githubRepositoryJpaRepository.findByFullName(FULL_NAME))
@@ -135,11 +134,9 @@ class EmbedConsumerTest {
         // CollectConsumer.consume()에 @Transactional이 없어 save()가 그 자리에서
         // 즉시 커밋되고, embedProducer.publish()는 그 이후에만 순차 호출된다
         // (별도 Kafka 트랜잭션 동기화 없이도 순차 실행 구조 자체가 "커밋 후
-        // 발행"을 보장함 — 2026-08-16 확인). 즉 EmbedConsumer 입장에서
-        // "레포 없음"은 타이밍 레이스가 아니라 영구적 상황이라, 예외가
-        // consume() 밖으로 전파되지 않고(Day 26 리팩토링 이후 재시도는 워커
-        // 스레드 내부 처리로 완전히 내부화됨) processWithRetry가 안에서
-        // 흡수하되 "재시도는 하지 않는다"만 검증한다.
+        // 발행"을 보장함). 즉 EmbedConsumer 입장에서 "레포 없음"은 타이밍
+        // 레이스가 아니라 영구적 상황이라, 예외가 consume() 밖으로 전파되지
+        // 않고 processWithRetry가 안에서 흡수하되 "재시도는 하지 않는다"만 검증한다.
         embedConsumer.consume(new EmbedMessage(FULL_NAME), ack);
 
         // then

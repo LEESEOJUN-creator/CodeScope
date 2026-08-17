@@ -32,9 +32,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Redis/Kafka port-forward)가 떠 있다는 전제로 @SpringBootTest를 쓴다.
  *
  * 왜 Ollama reachability 체크로 CI 자동 스킵인가:
- * OllamaEmbeddingServiceIntegrationTest(Day 25)와 동일한 패턴 — CI에는
- * Ollama가 없으므로 11434 포트 연결을 먼저 시도해보고 실패하면
- * Assumptions.abort()로 스킵한다(빌드를 깨지 않음).
+ * OllamaEmbeddingServiceIntegrationTest와 동일한 패턴 — CI에는 Ollama가
+ * 없으므로 11434 포트 연결을 먼저 시도해보고 실패하면 Assumptions.abort()로
+ * 스킵한다(빌드를 깨지 않음).
  */
 @SpringBootTest
 class RepoRecommendServiceIntegrationTest {

@@ -51,9 +51,8 @@ public class GithubOAuth2LoginSuccessHandler implements AuthenticationSuccessHan
         // TODO: GitHub 계정이 이메일을 비공개로 설정한 경우 attributes에 email이 안 내려옴
         //  추후 GitHub API의 /user/emails 엔드포인트로 별도 조회해 보완 필요
         //
-        // Day 30~31: 프론트가 이 실패를 인지할 수 있도록 JSON 대신 /login?error=...로
-        // 리다이렉트한다. error 값은 프론트 /login 페이지가 그대로 읽어 안내 문구로 매핑한다
-        // (에러 종류가 늘어나면 이 값도 늘어날 수 있어 "코드" 성격의 짧은 상수로 둔다).
+        // 프론트가 이 실패를 인지할 수 있도록 JSON 대신 /login?error=...로 리다이렉트한다.
+        // error 값은 프론트 /login 페이지가 그대로 읽어 안내 문구로 매핑한다.
         if (email == null) {
             log.warn("[GithubOAuth2] githubId={}의 email이 null이라 로그인을 처리할 수 없습니다.", githubId);
             response.sendRedirect(frontendBaseUrl + "/login?error=email_missing");
@@ -63,7 +62,7 @@ public class GithubOAuth2LoginSuccessHandler implements AuthenticationSuccessHan
         User user = userService.findOrCreateByGithub(githubId, email, username, profileImageUrl);
         Long userId = user.getUserId();
 
-        // 왜 Access Token을 응답에 안 싣는가(Day 30~31): sendRedirect의 목적지 URL은
+        // 왜 Access Token을 응답에 안 싣는가: sendRedirect의 목적지 URL은
         // 브라우저 주소창·서버 접근 로그·Referer 헤더 등 여러 경로로 노출될 수 있어,
         // 쿼리 파라미터로 Access Token을 실어 보내면 사실상 토큰이 유출되는 것과 같다.
         // Refresh Token만 HttpOnly 쿠키로 세팅해 두면, 프론트 콜백 페이지가 그 쿠키로
