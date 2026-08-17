@@ -7,6 +7,8 @@ import com.codescope.infra.security.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -24,6 +26,7 @@ public class SecurityConfig {
     private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
     private final GithubOAuth2LoginSuccessHandler githubOAuth2LoginSuccessHandler;
     private final GithubOAuth2LoginFailureHandler githubOAuth2LoginFailureHandler;
+    private final Environment environment;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -33,8 +36,8 @@ public class SecurityConfig {
                 // (Day 30~31: 프론트엔드 localhost:3000 → 백엔드 credentials 포함 요청 허용)
                 .cors(Customizer.withDefaults())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/api-docs/**").permitAll()
+                .authorizeHttpRequests(auth -> {
+                    auth.requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/api-docs/**").permitAll()
                         // K8s liveness/readiness probe는 인증 수단 없이 호출되므로
                         // 인증을 요구하면 401을 받고 "실패"로 판정됨
                         // → kubelet이 컨테이너를 계속 죽여 CrashLoopBackOff 발생(Exit Code 143)
@@ -51,13 +54,22 @@ public class SecurityConfig {
                         // (skills 파라미터로 스택 직접 지정). 로그인 시 저장된 스택
                         // 자동 사용은 User 서비스 로직 구현 시점 과제(현재 미구현)
                         .requestMatchers(HttpMethod.GET, "/api/recommend").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/trends/**").permitAll()
-                        // Day 35: 부하 테스트 트리거용 — LoadTestController 자체가
-                        // @Profile("test")라 운영 프로파일에서는 빈 자체가 안 뜬다.
-                        // JMeter/k6가 JWT 없이 바로 호출할 수 있어야 시나리오가 단순해진다.
-                        .requestMatchers(HttpMethod.POST, "/api/test/**").permitAll()
-                        .anyRequest().authenticated()
-                )
+                        .requestMatchers(HttpMethod.GET, "/api/trends/**").permitAll();
+
+                    // Day 35: 부하테스트 엔드포인트는 인증 없이 호출 가능해야
+                    // JMeter/k6가 직접 두드릴 수 있다. 단 이 허용 규칙은 test
+                    // 프로파일에서만 적용되어, 운영 환경에서는 이 엔드포인트
+                    // 자체가 존재하지 않는다(컨트롤러가 @Profile("test")라
+                    // 빈 등록 자체가 안 됨). SecurityConfig가 프로파일과 무관하게
+                    // 항상 로드되므로, permitAll 규칙 자체도 test 프로파일일 때만
+                    // authorizeHttpRequests에 추가해 운영 환경 설정에는 이 규칙의
+                    // 흔적조차 남기지 않는다(컨트롤러 부재 + 규칙 부재 이중 방어).
+                    if (environment.acceptsProfiles(Profiles.of("test"))) {
+                        auth.requestMatchers(HttpMethod.POST, "/api/test/**").permitAll();
+                    }
+
+                    auth.anyRequest().authenticated();
+                })
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(jwtAuthenticationEntryPoint))
                 .oauth2Login(oauth2 -> oauth2
                         .successHandler(githubOAuth2LoginSuccessHandler)
