@@ -54,7 +54,11 @@ public class DbSemaphoreConfig {
             // reserve: 세마포어를 거치지 않고 커넥션을 쓰는 경로(사용자 HTTP 요청의
             // @Transactional Service, @Scheduled 스케줄러, Actuator health의 DB
             // indicator)를 위한 예약분. 배치가 풀을 독점해 사용자 조회가 굶는 것을 방지.
-            // 기본값 2는 잠정치 — 실측(부하 테스트)으로 확정 예정.
+            // 기본값 2 (2026-08-17 실험 A/B/C 원복 완료 — 실험 C에서 reserve=0으로
+            // 임시 변경했다가 실험 종료 후 원래 값으로 되돌림. docs/performance/
+            // day35_backpressure.md 참고: 이번 실험 조건(count=50, durationMs=8000)에서는
+            // reserve 유무의 효과가 뚜렷하게 관찰되지 않았고, 세마포어 자체의 존재 여부가
+            // 더 지배적인 요인이었다 — reserve 세부 튜닝은 추가 실험 과제로 남김).
             @Value("${codescope.db-semaphore.reserve:2}") int reserve
     ) throws SQLException {
         int maximumPoolSize = dataSource.unwrap(HikariDataSource.class).getMaximumPoolSize();

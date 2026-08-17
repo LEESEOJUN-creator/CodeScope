@@ -55,13 +55,22 @@ public class LoadTestController {
     private final Semaphore dbSemaphore;
     private final DataSource dataSource;
 
-    @Operation(summary = "DB 세마포어 보호 구간에 count개 동시 배치 부하를 걸고 durationMs만큼 커넥션을 점유")
+    @Operation(summary = "count개 동시 배치 부하를 걸고 durationMs만큼 커넥션을 점유. "
+            + "useSemaphore=true(기본)면 DB 세마포어 보호 구간을 거치고, false면 세마포어 없이 바로 커넥션을 요청한다")
     @PostMapping("/simulate-batch-load")
     public ResponseEntity<ApiResponse<BatchLoadResult>> simulateBatchLoad(
             @RequestParam int count,
-            @RequestParam long durationMs
+            @RequestParam long durationMs,
+            // 실험 A(세마포어 없음)/B(세마포어 있음) 대조군 실험용 토글(2026-08-17 추가).
+            // 기존엔 이 엔드포인트가 항상 세마포어를 거쳐 "세마포어 있음/없음"을 같은
+            // 엔드포인트로 비교할 방법이 없었다(GET /api/repos/{id}는 애초에 세마포어와
+            // 무관한 별개 경로라 대조군이 될 수 없었음 — 이 문제로 그 이전 실험 A/B 결과 폐기).
+            // false일 때 dbSemaphore.acquire()/release()를 건너뛰어, count가
+            // permits(=maximumPoolSize-reserve)를 넘으면 HikariCP connection-timeout(기본 30s)으로
+            // 실패가 발생하는 무방비 상태를 그대로 재현한다.
+            @RequestParam(defaultValue = "true") boolean useSemaphore
     ) throws InterruptedException {
-        log.info("배치 부하 시뮬레이션 시작: count={}, durationMs={}", count, durationMs);
+        log.info("배치 부하 시뮬레이션 시작: count={}, durationMs={}, useSemaphore={}", count, durationMs, useSemaphore);
 
         AtomicInteger succeeded = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
@@ -77,13 +86,17 @@ public class LoadTestController {
                     // acquire()는 반드시 try 바깥 — DbSemaphoreConfig 클래스 주석의
                     // 확정된 사용 규칙(acquire 실패 시 finally의 release가 permit을
                     // 실제 획득 없이 늘리는 걸 방지)을 이 호출부에서도 그대로 지킨다.
-                    try {
-                        dbSemaphore.acquire();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        failed.incrementAndGet();
-                        latch.countDown();
-                        return;
+                    // useSemaphore=false면 이 블록 자체를 건너뛰어 세마포어 없이
+                    // 바로 DB 커넥션을 요청하는 무방비 상태를 재현한다.
+                    if (useSemaphore) {
+                        try {
+                            dbSemaphore.acquire();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            failed.incrementAndGet();
+                            latch.countDown();
+                            return;
+                        }
                     }
 
                     try (Connection connection = dataSource.getConnection();
@@ -94,7 +107,9 @@ public class LoadTestController {
                         log.warn("배치 부하 작업 실패: {}", e.getMessage());
                         failed.incrementAndGet();
                     } finally {
-                        dbSemaphore.release();
+                        if (useSemaphore) {
+                            dbSemaphore.release();
+                        }
                         latch.countDown();
                     }
                 });
