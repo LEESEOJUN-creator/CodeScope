@@ -89,7 +89,7 @@ def is_sensitive_command(command):
 
 def log_blocked(reason, detail):
     try:
-        log_path = ".claude/hooks/security.log"
+        log_path = os.path.join(os.environ.get("CLAUDE_PROJECT_DIR", "."), ".claude/hooks/security.log")
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_line = f"[{timestamp}] BLOCKED | {reason} | {detail}\n"
         with open(log_path, "a", encoding="utf-8") as f:
