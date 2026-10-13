@@ -27,8 +27,10 @@ public class UserService {
     @Transactional
     public User findOrCreateByGithub(Long githubId, String email, String username, String profileImageUrl) {
         return userJpaRepository.findByGithubId(githubId)
-                // TODO: 기존 User의 email/username/profileImageUrl이 GitHub 쪽과 달라졌을 때
-                //  update()로 동기화할지는 현재 범위 밖 — 추후 결정
+                .map(user -> {
+                    user.update(username, email, profileImageUrl);
+                    return user;
+                })
                 .orElseGet(() -> createUser(githubId, email, username, profileImageUrl));
     }
 

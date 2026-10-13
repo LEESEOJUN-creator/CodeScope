@@ -54,6 +54,7 @@ public class SecurityConfig {
                         // (skills 파라미터로 스택 직접 지정). 로그인 시 저장된 스택
                         // 자동 사용은 User 서비스 로직 구현 시점 과제(현재 미구현)
                         .requestMatchers(HttpMethod.GET, "/api/recommend").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/keywords", "/api/ecosystem", "/api/issues/recommend").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/trends/**").permitAll();
 
                     // 부하테스트 엔드포인트는 인증 없이 호출 가능해야 JMeter/k6가

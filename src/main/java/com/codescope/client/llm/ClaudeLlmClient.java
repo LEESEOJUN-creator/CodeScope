@@ -79,6 +79,8 @@ public class ClaudeLlmClient implements LlmClient {
         claudeAdmission.acquire();
         try {
             BetaMessage response = anthropicClient.beta().messages().create(buildParams(prompt));
+            log.info("LLM response: requestedModel={}, responseModel={}, messageId={}, stopReason={}",
+                    model, response.model(), response.id(), response.stopReason().orElse(null));
             recordUsage(response);
             return extractText(response);
         } finally {
@@ -86,12 +88,8 @@ public class ClaudeLlmClient implements LlmClient {
         }
     }
 
-    // 왜 effort를 명시하는가: 추천/트렌드 분석은 5줄 내외의 짧은 요약이라
-    //   깊은 추론이 필요 없다. effort를 낮추면 사고(thinking) 토큰과 지연이
-    //   함께 줄어든다(기본값은 모델마다 달라 명시해 둔다).
-    // 왜 max-tokens가 Ollama 시절(200)보다 큰가: 사고 토큰도 max_tokens 한도에
-    //   포함된다. 200으로 두면 사고만 하다 본문이 잘릴 수 있어, 응답 길이는
-    //   프롬프트("5줄 이내")로 제어하고 max-tokens는 넉넉한 안전 상한으로 둔다.
+    // effort는 비용·지연 조정용이고, 설명 길이는 각 서비스 프롬프트로 정한다.
+    // maxTokens는 상세 추천과 사고 토큰을 포함한 응답의 안전 상한이다.
     private MessageCreateParams buildParams(String prompt) {
         MessageCreateParams.Builder builder = MessageCreateParams.builder()
                 .model(model)

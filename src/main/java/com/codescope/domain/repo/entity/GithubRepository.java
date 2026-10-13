@@ -34,6 +34,18 @@ public class GithubRepository extends BaseEntity {
 
     private String language;
 
+    @Column(columnDefinition = "TEXT")
+    private String readmeExcerpt;
+
+    public void updateReadmeExcerpt(String excerpt) {
+        this.readmeExcerpt = excerpt;
+    }
+
+    public void updateMetadata(String description, String language) {
+        this.description = description;
+        this.language = language;
+    }
+
     private int starCount;
 
     private int forkCount;

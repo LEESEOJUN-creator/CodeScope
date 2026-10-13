@@ -50,6 +50,15 @@ class CollectConsumerTest {
     @Mock
     private TrendService trendService;
 
+    @Mock
+    private com.codescope.domain.repo.service.RepositoryTopicService repositoryTopicService;
+
+    @org.junit.jupiter.api.BeforeEach
+    void brokerAcknowledgesPublish() {
+        org.mockito.Mockito.lenient().when(embedProducer.publish(any()))
+                .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
+    }
+
     @InjectMocks
     private CollectConsumer collectConsumer;
 
@@ -137,7 +146,7 @@ class CollectConsumerTest {
     }
 
     @Test
-    @DisplayName("DB 레벨 중복(DataIntegrityViolationException)은 정상 멱등 처리로 보고 완료 표식 후 ack한다")
+    @DisplayName("DB 제약 오류는 후속 토픽 저장/임베딩 완료를 보장하지 않으므로 재시도한다")
     void consume_DB_중복은_완료_처리() {
         // given
         given(duplicateCheckService.isRecentlyCompleted(FULL_NAME)).willReturn(false);
@@ -148,12 +157,13 @@ class CollectConsumerTest {
                 .given(githubRepositoryJpaRepository).save(any(GithubRepository.class));
 
         // when
-        collectConsumer.consume(createMessage(), ack);
+        assertThatThrownBy(() -> collectConsumer.consume(createMessage(), ack))
+                .isInstanceOf(DataIntegrityViolationException.class);
 
-        // then
         verify(embedProducer, never()).publish(any());
-        verify(duplicateCheckService).markCompleted(FULL_NAME);
-        verify(ack).acknowledge();
+        verify(duplicateCheckService, never()).markCompleted(FULL_NAME);
+        verify(duplicateCheckService).releaseLock(FULL_NAME);
+        verify(ack, never()).acknowledge();
     }
 
     @Test
@@ -220,6 +230,18 @@ class CollectConsumerTest {
                 5,
                 "https://github.com/" + FULL_NAME
         );
+    }
+
+    @Test
+    void brokerFailureMustNotMarkCompletedOrAcknowledge() {
+        given(duplicateCheckService.tryLock(FULL_NAME)).willReturn(true);
+        given(githubRepositoryJpaRepository.findByFullName(FULL_NAME)).willReturn(Optional.empty());
+        given(embedProducer.publish(FULL_NAME)).willReturn(java.util.concurrent.CompletableFuture.failedFuture(
+                new IllegalStateException("broker unavailable")));
+        assertThatThrownBy(() -> collectConsumer.consume(createMessage(), ack)).isInstanceOf(RuntimeException.class);
+        verify(duplicateCheckService).releaseLock(FULL_NAME);
+        verify(duplicateCheckService, never()).markCompleted(any());
+        verify(ack, never()).acknowledge();
     }
 
     private GithubRepository createEntity(int stars, int forks, int issues) {

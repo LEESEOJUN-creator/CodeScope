@@ -204,6 +204,11 @@ management:
 #     로컬: .env 파일 / 배포: K8s Secret
 # ──────────────────────────────────────
 github:
+  collection:
+    interval-ms: 600000
+    per-query: 10
+    # 전체 인기 순위에만 치우치지 않도록 기술별로 후보를 확보한다.
+    queries: "stars:>1000,language:Java stars:>100,topic:spring-boot stars:>100,language:TypeScript stars:>100,language:Python stars:>100,language:Go stars:>100,language:Rust stars:>100,topic:kafka stars:>100,topic:kubernetes stars:>100"
   token: ${GITHUB_TOKEN:your-token-here}
   api:
     base-url: https://api.github.com
@@ -244,7 +249,7 @@ llm:
     # 그 앞까지만 지정. 게이트웨이를 거치면 프롬프트가 그 사업자를 경유한다.
     base-url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}
     model: ${CLAUDE_MODEL:claude-opus-5-5}
-    # 추천/트렌드 분석은 짧은 요약이라 low로 충분하다(ClaudeLlmClient 주석 참고)
+    # 상세 추천 길이는 프롬프트로 결정한다. effort는 지연/비용을 위한 별도 설정이다.
     effort: ${CLAUDE_EFFORT:low}
     # 사고 토큰도 이 한도에 포함된다 — 응답 길이는 프롬프트로 제어하고,
     # 이 값은 본문이 잘리지 않도록 하는 넉넉한 안전 상한이다
@@ -312,6 +317,11 @@ llm:
 #   맞춰 poll 스레드 대기시간을 줄이는 것으로 우선 대응
 # ──────────────────────────────────────
 codescope:
+  recommendation:
+    candidate-limit: 10
+    evidence-max-chars: 1600
+    issue-repo-limit: 5
+    issue-limit: 10
   # generation.provider=ollama일 때는 OllamaLlmClient(생성)도 이 세마포어를
   # 공유한다 — 임베딩과 생성이 동일한 로컬 Ollama 프로세스를 두드리는
   # 것이라, 나눠봐야 실제 자원 경합은 그대로 재현됨

@@ -29,6 +29,8 @@ public class GithubOAuth2LoginSuccessHandler implements AuthenticationSuccessHan
     private final JwtProvider jwtProvider;
     private final RefreshTokenService refreshTokenService;
     private final RefreshTokenCookieFactory refreshTokenCookieFactory;
+    private final org.springframework.security.oauth2.client.OAuth2AuthorizedClientService authorizedClients;
+    private final com.codescope.infra.github.GithubApiClient githubApiClient;
 
     @Value("${frontend.base-url}")
     private String frontendBaseUrl;
@@ -48,12 +50,21 @@ public class GithubOAuth2LoginSuccessHandler implements AuthenticationSuccessHan
         String email = (String) attributes.get("email");
         String profileImageUrl = (String) attributes.get("avatar_url");
 
-        // TODO: GitHub 계정이 이메일을 비공개로 설정한 경우 attributes에 email이 안 내려옴
-        //  추후 GitHub API의 /user/emails 엔드포인트로 별도 조회해 보완 필요
-        //
+        // 비공개 이메일은 사용자가 승인한 OAuth user:email 토큰으로만 조회한다.
+        if (email == null || email.isBlank()) {
+            org.springframework.security.oauth2.client.OAuth2AuthorizedClient client = authorizedClients
+                    .loadAuthorizedClient(oAuth2Token.getAuthorizedClientRegistrationId(), oAuth2Token.getName());
+            if (client != null) {
+                try {
+                    email = githubApiClient.fetchVerifiedEmail(client.getAccessToken().getTokenValue());
+                } catch (org.springframework.web.client.RestClientException e) {
+                    log.warn("GitHub 이메일 조회 실패: {}", e.getClass().getSimpleName());
+                }
+            }
+        }
         // 프론트가 이 실패를 인지할 수 있도록 JSON 대신 /login?error=...로 리다이렉트한다.
         // error 값은 프론트 /login 페이지가 그대로 읽어 안내 문구로 매핑한다.
-        if (email == null) {
+        if (email == null || email.isBlank()) {
             log.warn("[GithubOAuth2] githubId={}의 email이 null이라 로그인을 처리할 수 없습니다.", githubId);
             response.sendRedirect(frontendBaseUrl + "/login?error=email_missing");
             return;

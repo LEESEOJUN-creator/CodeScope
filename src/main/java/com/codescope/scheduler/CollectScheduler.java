@@ -42,7 +42,7 @@ public class CollectScheduler {
     // 왜 fixedDelay인가: fixedRate는 이전 실행이 안 끝나도 다음 실행을 시작해
     //   재시도까지 포함한 이번 사이클 처리 중에 겹쳐 돌 위험이 있음
     //   fixedDelay는 "이전 실행 종료 후" 10분을 재므로 겹침 없이 안전
-    @Scheduled(fixedDelay = 600_000)
+    @Scheduled(fixedDelayString = "${github.collection.interval-ms:600000}")
     public void collect() {
         List<TrendingRepoDto> trendingRepos;
 
@@ -121,7 +121,8 @@ public class CollectScheduler {
                 dto.starsCount(),
                 dto.forksCount(),
                 dto.openIssuesCount(),
-                dto.htmlUrl()
+                dto.htmlUrl(),
+                dto.topics()
         );
     }
 }

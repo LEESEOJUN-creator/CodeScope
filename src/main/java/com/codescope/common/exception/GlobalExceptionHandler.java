@@ -17,6 +17,14 @@ import java.util.stream.Collectors;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    @ExceptionHandler(org.springframework.web.client.RestClientException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUpstream(org.springframework.web.client.RestClientException e) {
+        log.warn("외부 데이터 조회 실패: {}", e.getClass().getSimpleName());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, "60")
+                .body(ApiResponse.error("외부 데이터 제공 서버가 응답하지 않거나 요청 한도에 도달했습니다. 잠시 후 다시 시도해주세요."));
+    }
+
     @ExceptionHandler(EntityNotFoundException.class)
     public ResponseEntity<ApiResponse<Void>> handleEntityNotFound(EntityNotFoundException e) {
         log.warn("[EntityNotFound] {}", e.getMessage());

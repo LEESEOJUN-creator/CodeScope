@@ -42,6 +42,7 @@ function Recommend() {
     setLoading(true);
     setError(null);
     setRetryAfter(null);
+    setResult(null);
     const path = useMySkills ? '/api/recommend' : `/api/recommend?stack=${encodeURIComponent(query.join(', '))}`;
     const res = await apiRequest<RepoRecommend>(path);
     setLoading(false);
@@ -69,8 +70,8 @@ function Recommend() {
       <div className="page-header">
         <h1>AI 추천</h1>
         <p className="page-subtitle">
-          기술 스택을 입력하면 임베딩 유사도(pgvector)로 후보 레포 10개를 찾고, Claude가 그 목록
-          안에서만 골라 추천 이유를 설명합니다.
+          기술명과 프로젝트 내용을 함께 비교해 후보를 찾고, 설명·토픽·README를 근거로
+          적합한 이유와 시작 방법을 안내합니다. 입력 제안은 실제 수집된 언어와 토픽입니다.
         </p>
       </div>
 
@@ -142,11 +143,14 @@ function Recommend() {
                 <div className="card ai-result">
                   <p className="ai-result__label">✦ {result.stack} 기준 추천</p>
                   <RichText text={result.recommendation} />
+                  <Link href={`/issues?skills=${encodeURIComponent(result.stack)}`} className="link-more">
+                    이 스택으로 실제 기여 이슈 찾기 →
+                  </Link>
                 </div>
 
                 <div className="section-head">
-                  <h2 className="section-title">유사도 상위 후보 {result.candidates.length}개</h2>
-                  <span className="muted">임베딩 거리 순</span>
+                  <h2 className="section-title">추천 검토 후보 {result.candidates.length}개</h2>
+                  <span className="muted">기술명 일치 · 내용 유사도 기준</span>
                 </div>
                 <div className="card-grid">
                   {result.candidates.map((c, i) => (

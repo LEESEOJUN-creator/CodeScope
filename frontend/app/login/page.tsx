@@ -10,7 +10,7 @@ import { GithubIcon } from '@/components/github-icon';
 // 늘어나면 이 매핑에 항목만 추가하면 된다.
 const ERROR_MESSAGES: Record<string, string> = {
   email_missing:
-    'GitHub 계정에 이메일이 공개 설정되어 있어야 로그인할 수 있습니다. GitHub 설정에서 이메일 공개 범위를 확인해주세요.',
+    '확인된 GitHub 이메일을 가져오지 못했습니다. 계정의 이메일 인증과 앱의 이메일 접근 권한을 확인한 뒤 다시 시도해주세요.',
 };
 
 function LoginError() {

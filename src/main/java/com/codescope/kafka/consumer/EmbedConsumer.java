@@ -145,10 +145,16 @@ public class EmbedConsumer {
                 .orElseThrow(() -> new IllegalStateException(
                         "임베딩 대상 레포가 DB에 없습니다: fullName=" + fullName));
 
-        String readme = githubApiClient.fetchReadme(fullName);
+        String readme;
+        try {
+            readme = githubApiClient.fetchReadme(fullName);
+        } catch (HttpClientErrorException.NotFound e) {
+            readme = ""; // README가 없어도 메타데이터로 검색할 수 있다.
+        }
         // README 전체가 아니라 "이름·설명·언어 + 정리된 README 앞부분"을 임베딩한다
         // (근거: EmbeddingDocumentBuilder 주석, docs/performance 실측)
         String document = embeddingDocumentBuilder.build(repository, readme);
+        repository.updateReadmeExcerpt(document);
         float[] embedding = embeddingService.embed(fullName, document);
 
         // 이미 임베딩이 있으면(재수집 사이클로 다시 들어온 경우) 갱신,

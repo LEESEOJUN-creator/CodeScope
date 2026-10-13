@@ -1,6 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
+import { useApiData } from '@/lib/use-api-data';
+import type { Keyword } from '@/lib/types';
 
 type StackInputProps = {
   values: string[];
@@ -13,6 +15,8 @@ type StackInputProps = {
 // 기술 스택 칩 입력. Enter 또는 쉼표로 추가, 칩의 ×로 삭제, 빈 입력에서 Backspace로 마지막 삭제.
 export function StackInput({ values, onAdd, onRemove, placeholder, disabled }: StackInputProps) {
   const [draft, setDraft] = useState('');
+  const suggestionsId = useId();
+  const { data: keywords } = useApiData<Keyword[]>('/api/keywords');
 
   const commit = () => {
     const value = draft.trim().replace(/,$/, '').trim();
@@ -39,6 +43,7 @@ export function StackInput({ values, onAdd, onRemove, placeholder, disabled }: S
       <input
         className="chip-input__field"
         value={draft}
+        list={suggestionsId}
         disabled={disabled}
         placeholder={values.length === 0 ? placeholder : '스택 추가'}
         aria-label="기술 스택 입력"
@@ -62,6 +67,11 @@ export function StackInput({ values, onAdd, onRemove, placeholder, disabled }: S
         }}
         onBlur={commit}
       />
+      <datalist id={suggestionsId}>
+        {(keywords ?? []).map((keyword) => (
+          <option key={keyword.name} value={keyword.name}>{keyword.repositoryCount}개 저장소</option>
+        ))}
+      </datalist>
     </div>
   );
 }

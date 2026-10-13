@@ -6,13 +6,12 @@ import { useState } from 'react';
 import { RepoCard, RepoCardSkeleton } from '@/components/repo-card';
 import { useApiData } from '@/lib/use-api-data';
 import { useFavorites } from '@/lib/use-favorites';
-import type { GithubRepository } from '@/lib/types';
-
-const QUICK_STACKS = ['Java, Spring Boot, Kafka', 'TypeScript, React, Next.js', 'Python, Machine Learning', 'Go, Kubernetes'];
+import type { GithubRepository, Keyword } from '@/lib/types';
 
 export default function HomePage() {
   const router = useRouter();
   const [keyword, setKeyword] = useState('');
+  const { data: keywords } = useApiData<Keyword[]>('/api/keywords');
   const { data: trending, loading, error } = useApiData<GithubRepository[]>('/api/repos/trending?limit=6');
   const { isFavorited, toggle } = useFavorites();
 
@@ -26,8 +25,8 @@ export default function HomePage() {
           <span className="text-accent">내 스택</span>에 맞는 것만 골라서.
         </h1>
         <p className="hero__subtitle">
-          GitHub 트렌딩 레포를 수집·임베딩해 두고, 기술 스택을 입력하면 pgvector 유사도 검색으로 후보를
-          찾은 뒤 Claude가 그 안에서만 골라 이유를 설명합니다.
+          기술별 GitHub 프로젝트를 모아 내 스택에 맞는 후보를 찾습니다.
+          프로젝트 설명과 README를 바탕으로 추천 이유와 시작 방법을 확인하세요.
         </p>
 
         <form
@@ -51,10 +50,10 @@ export default function HomePage() {
         </form>
 
         <div className="quick-stacks">
-          <span className="muted">스택으로 바로 추천받기</span>
-          {QUICK_STACKS.map((stack) => (
-            <Link key={stack} href={`/recommend?stack=${encodeURIComponent(stack)}`} className="chip chip--link">
-              {stack}
+          <span className="muted">수집된 언어·GitHub 토픽으로 추천받기</span>
+          {(keywords ?? []).slice(0, 12).map((item) => (
+            <Link key={item.name} href={`/recommend?stack=${encodeURIComponent(item.name)}`} className="chip chip--link">
+              {item.name} · {item.repositoryCount}
             </Link>
           ))}
         </div>

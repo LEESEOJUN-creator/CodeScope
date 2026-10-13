@@ -8,6 +8,8 @@ const PUBLIC_NAV = [
   { href: '/explore', label: '탐색' },
   { href: '/trending', label: '트렌드' },
   { href: '/recommend', label: 'AI 추천' },
+  { href: '/issues', label: '기여 이슈' },
+  { href: '/ecosystem', label: '기술 생태계' },
 ];
 
 const PRIVATE_NAV = [

@@ -178,8 +178,9 @@ GET    /api/repos/trending?limit=20          ← Redis Sorted Set 랭킹(수집 
 GET    /api/trends/analysis?repoId=1
 GET    /api/recommend?stack=Spring Boot,Redis,Kafka  (비로그인)
 GET    /api/recommend                        (로그인 시 저장된 스택 자동 사용)
-GET    /api/issues/recommend?skills=Java,Spring Boot  ← 미구현(이슈 수집 없음)
-GET    /api/ecosystem?tech=kafka                      ← 미구현
+GET    /api/issues/recommend?skills=Java,Spring Boot  ← 스택 일치 저장소의 GitHub 열린 미배정 good first issue + AI 안내
+GET    /api/ecosystem?tech=kafka                      ← 수집 저장소 언어/topics 동시 등장 집계 (시계열 성장률 아님)
+GET    /api/keywords                                ← 실제 수집 저장소의 언어/topics와 저장소 수
 [사용자]
 GET    /oauth2/authorization/github          ← GitHub 로그인 시작
 POST   /api/auth/refresh | /api/auth/logout

@@ -79,3 +79,20 @@ export type Skill = {
   topicId: number;
   topicName: string;
 };
+
+export type Keyword = { name: string; repositoryCount: number; source: string };
+export type Ecosystem = {
+  technology: string;
+  repositoryCount: number;
+  related: { name: string; repositoryCount: number }[];
+  repositories: { id: number; fullName: string; language: string | null; starCount: number }[];
+  scope: string;
+};
+export type IssueRecommendation = {
+  skills: string;
+  recommendation: string;
+  issues: { id: number; number: number; title: string; url: string; updatedAt: string }[];
+  searchedRepositories: string[];
+  incompleteResults: boolean;
+  checkedAt: string;
+};

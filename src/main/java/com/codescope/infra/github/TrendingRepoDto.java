@@ -26,6 +26,11 @@ public record TrendingRepoDto(
         int openIssuesCount,
 
         @JsonProperty("html_url")
-        String htmlUrl
+        String htmlUrl,
+        java.util.List<String> topics
 ) {
+    public TrendingRepoDto(String name, String fullName, String description, String language,
+                           int starsCount, int forksCount, int openIssuesCount, String htmlUrl) {
+        this(name, fullName, description, language, starsCount, forksCount, openIssuesCount, htmlUrl, java.util.List.of());
+    }
 }

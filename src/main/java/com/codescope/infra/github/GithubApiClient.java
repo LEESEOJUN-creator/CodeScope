@@ -5,6 +5,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.client.RestClientException;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -22,14 +24,49 @@ public class GithubApiClient {
 
     private final RestClient githubRestClient;
 
+    @Value("${github.collection.queries}")
+    private List<String> collectionQueries;
+    @Value("${github.collection.per-query:10}")
+    private int perQuery;
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    public record Email(String email, boolean primary, boolean verified) {}
+
+    public String fetchVerifiedEmail(String oauthToken) {
+        Email[] emails = githubRestClient.get().uri("/user/emails")
+                .headers(headers -> headers.setBearerAuth(oauthToken))
+                .retrieve().body(Email[].class);
+        if (emails == null) return null;
+        return java.util.Arrays.stream(emails).filter(Email::verified)
+                .filter(email -> email.email() != null && !email.email().isBlank())
+                .sorted(java.util.Comparator.comparing(Email::primary).reversed())
+                .map(Email::email).findFirst().orElse(null);
+    }
+
     // GitHub Search API(/search/repositories) 호출
     // 왜 pushed 조건을 매번 동적 계산하는가: 하드코딩된 날짜는 시간이 지날수록
     //   "최근 활성"이라는 의미가 무색해짐 → 호출 시점 기준 최근 6개월로 매번 재계산
     // 왜 per_page=30인가: 토큰 있어도 Search API는 별도로 초당/분당 Rate Limit이
     //   더 빡빡해서(30req/min), 우선 적게 시작
     public List<TrendingRepoDto> searchTrending() {
+        var unique = new java.util.LinkedHashMap<String, TrendingRepoDto>();
+        for (String seed : collectionQueries) {
+            try {
+                searchRepositories(seed).forEach(repo -> unique.putIfAbsent(repo.fullName(), repo));
+            } catch (RestClientException e) {
+                log.warn("기술별 수집 실패: query={}, error={}", seed, e.getClass().getSimpleName());
+                // 인증/한도 오류 후 나머지 요청도 연속 실패하는 것을 방지한다.
+                if (e instanceof org.springframework.web.client.HttpClientErrorException http
+                        && (http.getStatusCode().value() == 403 || http.getStatusCode().value() == 429
+                        || http.getStatusCode().value() == 401)) break;
+            }
+        }
+        return List.copyOf(unique.values());
+    }
+
+    private List<TrendingRepoDto> searchRepositories(String seed) {
         String pushedSince = LocalDate.now().minusMonths(6).format(QUERY_DATE_FORMAT);
-        String query = "stars:>1000 pushed:>" + pushedSince;
+        String query = seed + " archived:false fork:false pushed:>" + pushedSince;
 
         ResponseEntity<GithubSearchResponse> entity = githubRestClient.get()
                 .uri(uriBuilder -> uriBuilder
@@ -37,7 +74,7 @@ public class GithubApiClient {
                         .queryParam("q", query)
                         .queryParam("sort", "stars")
                         .queryParam("order", "desc")
-                        .queryParam("per_page", 30)
+                        .queryParam("per_page", Math.clamp(perQuery, 1, 100))
                         .build())
                 .retrieve()
                 .toEntity(GithubSearchResponse.class);
@@ -55,6 +92,24 @@ public class GithubApiClient {
                 query, response.totalCount(), response.items().size());
 
         return response.items();
+    }
+
+    public GithubIssueSearchResponse searchStarterIssues(List<String> repositories, int limit) {
+        if (repositories.isEmpty()) return new GithubIssueSearchResponse(List.of(), false);
+        // 저장된 fullName만 사용하더라도 search qualifier 삽입은 허용하지 않는다.
+        if (repositories.stream().anyMatch(name -> !name.matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"))) {
+            throw new IllegalArgumentException("잘못된 GitHub 저장소 이름입니다.");
+        }
+        String query = "is:issue is:open no:assignee label:\"good first issue\" "
+                + repositories.stream().map(name -> "repo:" + name).collect(java.util.stream.Collectors.joining(" "));
+        var response = githubRestClient.get().uri(builder -> builder.path("/search/issues")
+                        .queryParam("q", query).queryParam("sort", "updated").queryParam("order", "desc")
+                        .queryParam("per_page", Math.clamp(limit, 1, 100)).build())
+                .retrieve().body(GithubIssueSearchResponse.class);
+        if (response == null || response.items() == null) {
+            throw new IllegalStateException("GitHub 이슈 검색 응답이 비어 있습니다.");
+        }
+        return response;
     }
 
     // GitHub API: GET /repos/{fullName}/readme

@@ -31,6 +31,7 @@ public class CollectConsumer {
     private final GithubRepositoryJpaRepository githubRepositoryJpaRepository;
     private final EmbedProducer embedProducer;
     private final TrendService trendService;
+    private final com.codescope.domain.repo.service.RepositoryTopicService repositoryTopicService;
 
     // 재시도/DLT를 @RetryableTopic에 위임한다.
     // 왜: 기존에는 예외를 던지면 "Kafka가 재전달해준다"고 봤지만, 실제로는
@@ -86,6 +87,7 @@ public class CollectConsumer {
                     githubRepositoryJpaRepository.findByFullName(fullName);
 
             if (existing.isPresent()) {
+                existing.get().updateMetadata(message.description(), message.language());
                 existing.get().update(
                         message.starCount(),
                         message.forkCount(),
@@ -104,19 +106,15 @@ public class CollectConsumer {
                 log.info("레포 신규 저장 완료: fullName={}", fullName);
             }
 
+            repositoryTopicService.sync(existing.get().getId(), message.topics());
+
             // 트렌드 랭킹(Redis Sorted Set)에 스타 수 반영 — 멱등 덮어쓰기
             // (TrendService.updateScore 참고. 이 호출이 없어 랭킹이 항상 비어 있었다)
             trendService.updateScore(existing.get().getId(), message.starCount());
 
             // 5. 성공 경로: 임베딩 이벤트 발행 → 완료 표식 → 커밋
-            embedProducer.publish(fullName);
-            duplicateCheckService.markCompleted(fullName);
-            ack.acknowledge();
-
-        } catch (DataIntegrityViolationException e) {
-            // 6. 조회~저장 사이에 다른 인스턴스가 먼저 넣은 경우(DB unique 최종 방어선).
-            //    실패가 아니라 정상적인 멱등 처리이므로 완료로 간주하고 커밋한다.
-            log.info("DB 레벨 중복 감지, 완료 처리: fullName={}", fullName);
+            // 브로커 수신 확인 전에 완료/ack하면 발행 실패 시 임베딩이 영구 누락된다.
+            embedProducer.publish(fullName).join();
             duplicateCheckService.markCompleted(fullName);
             ack.acknowledge();
 

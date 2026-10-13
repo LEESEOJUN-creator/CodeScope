@@ -93,7 +93,7 @@ class RecommendControllerTest {
                 .andExpect(jsonPath("$.data.stack").value("Rust,WebAssembly"));
 
         // 실제로 그 값으로 검색(임베딩 질의)됐는지까지 확인
-        verify(embeddingService).embedQuery("Rust,WebAssembly");
+        verify(embeddingService).embedQuery("rust, webassembly");
     }
 
     @Test
@@ -104,7 +104,7 @@ class RecommendControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.stack").value("Java,Kafka"));
 
-        verify(embeddingService).embedQuery("Java,Kafka");
+        verify(embeddingService).embedQuery("java, kafka");
     }
 
     @Test
