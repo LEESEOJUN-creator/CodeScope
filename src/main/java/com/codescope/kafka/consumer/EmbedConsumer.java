@@ -5,6 +5,7 @@ import com.codescope.domain.repo.entity.GithubRepository;
 import com.codescope.domain.repo.entity.RepoEmbedding;
 import com.codescope.domain.repo.repository.GithubRepositoryJpaRepository;
 import com.codescope.domain.repo.repository.RepoEmbeddingJpaRepository;
+import com.codescope.domain.repo.service.EmbeddingDocumentBuilder;
 import com.codescope.infra.github.GithubApiClient;
 import com.codescope.kafka.dto.EmbedMessage;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +25,7 @@ import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 
-// README 수집 + Ollama 임베딩 생성 + pgvector 저장. poll 스레드 동기 처리로
+// README 수집 + 임베딩 문서 구성(앞부분) + Ollama 임베딩 생성 + pgvector 저장. poll 스레드 동기 처리로
 // 인한 리밸런싱 폭주(docs/troubleshooting.md 참고)를 막기 위해, 실제 처리는
 // embedWorkerExecutor로 위임하는 구조.
 @Slf4j
@@ -41,6 +42,7 @@ public class EmbedConsumer {
 
     private final GithubApiClient githubApiClient;
     private final EmbeddingService embeddingService;
+    private final EmbeddingDocumentBuilder embeddingDocumentBuilder;
     private final GithubRepositoryJpaRepository githubRepositoryJpaRepository;
     private final RepoEmbeddingJpaRepository repoEmbeddingJpaRepository;
     private final ExecutorService embedWorkerExecutor;
@@ -144,7 +146,10 @@ public class EmbedConsumer {
                         "임베딩 대상 레포가 DB에 없습니다: fullName=" + fullName));
 
         String readme = githubApiClient.fetchReadme(fullName);
-        float[] embedding = embeddingService.embed(fullName, readme);
+        // README 전체가 아니라 "이름·설명·언어 + 정리된 README 앞부분"을 임베딩한다
+        // (근거: EmbeddingDocumentBuilder 주석, docs/performance 실측)
+        String document = embeddingDocumentBuilder.build(repository, readme);
+        float[] embedding = embeddingService.embed(fullName, document);
 
         // 이미 임베딩이 있으면(재수집 사이클로 다시 들어온 경우) 갱신,
         // 없으면 신규 저장. repo_id UNIQUE 제약 때문에 무조건 save()만

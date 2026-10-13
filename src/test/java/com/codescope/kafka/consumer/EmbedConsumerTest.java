@@ -5,6 +5,7 @@ import com.codescope.domain.repo.entity.GithubRepository;
 import com.codescope.domain.repo.entity.RepoEmbedding;
 import com.codescope.domain.repo.repository.GithubRepositoryJpaRepository;
 import com.codescope.domain.repo.repository.RepoEmbeddingJpaRepository;
+import com.codescope.domain.repo.service.EmbeddingDocumentBuilder;
 import com.codescope.infra.github.GithubApiClient;
 import com.codescope.kafka.dto.EmbedMessage;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.support.Acknowledgment;
 
@@ -38,6 +40,8 @@ class EmbedConsumerTest {
 
     private static final String FULL_NAME = "codescope/test-repo";
     private static final float[] EMBEDDING = new float[]{0.1f, 0.2f, 0.3f};
+    // createRepository()의 메타데이터 + "# readme"를 정리한 본문("readme")
+    private static final String EXPECTED_DOCUMENT = FULL_NAME + "\n테스트용 레포\nLanguage: Java\n\nreadme";
 
     @Mock
     private GithubApiClient githubApiClient;
@@ -58,6 +62,11 @@ class EmbedConsumerTest {
     // 이 자리를 null로 채워, consume() 호출 시 NullPointerException이 난다.
     @Mock
     private ExecutorService embedWorkerExecutor;
+
+    // 문서 구성은 순수 함수라 mock 대신 실제 객체를 주입한다(@Spy) — embed()에
+    // 넘어가는 값이 "README 원문"이 아니라 "구성된 문서"임을 그대로 검증하기 위함
+    @Spy
+    private EmbeddingDocumentBuilder embeddingDocumentBuilder = new EmbeddingDocumentBuilder(2000);
 
     @InjectMocks
     private EmbedConsumer embedConsumer;
@@ -85,7 +94,7 @@ class EmbedConsumerTest {
         given(githubRepositoryJpaRepository.findByFullName(FULL_NAME))
                 .willReturn(Optional.of(repository));
         given(githubApiClient.fetchReadme(FULL_NAME)).willReturn("# readme");
-        given(embeddingService.embed(FULL_NAME, "# readme")).willReturn(EMBEDDING);
+        given(embeddingService.embed(FULL_NAME, EXPECTED_DOCUMENT)).willReturn(EMBEDDING);
         given(repoEmbeddingJpaRepository.findByRepositoryId(repository.getId()))
                 .willReturn(Optional.empty());
 
@@ -108,7 +117,7 @@ class EmbedConsumerTest {
         given(githubRepositoryJpaRepository.findByFullName(FULL_NAME))
                 .willReturn(Optional.of(repository));
         given(githubApiClient.fetchReadme(FULL_NAME)).willReturn("# readme");
-        given(embeddingService.embed(FULL_NAME, "# readme")).willReturn(EMBEDDING);
+        given(embeddingService.embed(FULL_NAME, EXPECTED_DOCUMENT)).willReturn(EMBEDDING);
         given(repoEmbeddingJpaRepository.findByRepositoryId(repository.getId()))
                 .willReturn(Optional.of(existingEmbedding));
 

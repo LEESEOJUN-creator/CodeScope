@@ -52,7 +52,7 @@ class OllamaEmbeddingServiceIntegrationTest {
         RestClient restClient = RestClient.builder().baseUrl(BASE_URL).build();
         Semaphore semaphore = new Semaphore(2, true);
         OllamaEmbeddingService embeddingService =
-                new OllamaEmbeddingService(restClient, semaphore, MODEL);
+                new OllamaEmbeddingService(restClient, semaphore, MODEL, 2000);
 
         String dummyReadme = """
                 # CodeScope

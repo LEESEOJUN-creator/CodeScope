@@ -48,6 +48,7 @@ class LlmProviderWiringTest {
                     "llm.stub.embedding-dimension=768",
                     "llm.ollama.base-url=http://localhost:11434",
                     "llm.ollama.embedding-model=nomic-embed-text",
+                    "llm.ollama.chunk-size=2000",
                     "llm.ollama.connect-timeout-ms=3000",
                     "llm.ollama.read-timeout-ms=20000",
                     "llm.ollama.generation.model=llama3.2:3b",

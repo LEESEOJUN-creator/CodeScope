@@ -28,7 +28,6 @@ import java.util.concurrent.Semaphore;
 @ConditionalOnProperty(name = "llm.embedding.provider", havingValue = "ollama", matchIfMissing = true)
 public class OllamaEmbeddingService implements EmbeddingService {
 
-    private static final int CHUNK_SIZE = 500;
 
     // nomic-embed-text는 "저장할 문서"와 "검색 질문"을 서로 다른 벡터
     // 공간으로 학습한 모델이라, 인덱싱(저장) 대상 텍스트 앞에 이 prefix를
@@ -45,6 +44,7 @@ public class OllamaEmbeddingService implements EmbeddingService {
     private final RestClient ollamaRestClient;
     private final Semaphore ollamaSemaphore;
     private final String embeddingModel;
+    private final int chunkSize;
 
     // @Value를 필드가 아닌 생성자 파라미터에 붙이기 위해 Lombok
     // @RequiredArgsConstructor 대신 생성자를 직접 쓴다(다른 두 협력
@@ -52,11 +52,13 @@ public class OllamaEmbeddingService implements EmbeddingService {
     public OllamaEmbeddingService(
             RestClient ollamaRestClient,
             @Qualifier("ollamaSemaphore") Semaphore ollamaSemaphore,
-            @Value("${llm.ollama.embedding-model}") String embeddingModel
+            @Value("${llm.ollama.embedding-model}") String embeddingModel,
+            @Value("${llm.ollama.chunk-size}") int chunkSize
     ) {
         this.ollamaRestClient = ollamaRestClient;
         this.ollamaSemaphore = ollamaSemaphore;
         this.embeddingModel = embeddingModel;
+        this.chunkSize = chunkSize;
     }
 
     @Override
@@ -101,12 +103,14 @@ public class OllamaEmbeddingService implements EmbeddingService {
         return callOllama(QUERY_PREFIX + queryText);
     }
 
-    // 500자 단위 단순 분할(오버랩 없음). 문장 중간이 끊길 수 있으나
-    // 이번 스코프에서는 감수한다.
+    // chunk-size 단위 단순 분할(오버랩 없음). EmbedConsumer는 이제
+    // EmbeddingDocumentBuilder로 앞부분만 잘라(document-max-chars) 넘기고,
+    // chunk-size를 그 이상으로 두므로 보통 청크 1개 = 호출 1번이다. 분할·평균
+    // 로직은 그보다 긴 입력이 들어올 때의 안전장치로만 남겨 둔다.
     private List<String> chunk(String text) {
         List<String> chunks = new ArrayList<>();
-        for (int i = 0; i < text.length(); i += CHUNK_SIZE) {
-            chunks.add(text.substring(i, Math.min(text.length(), i + CHUNK_SIZE)));
+        for (int i = 0; i < text.length(); i += chunkSize) {
+            chunks.add(text.substring(i, Math.min(text.length(), i + chunkSize)));
         }
         return chunks;
     }

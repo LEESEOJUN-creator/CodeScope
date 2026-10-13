@@ -267,6 +267,10 @@ llm:
     # 배제하고 로컬/배포 동일하게 이 모델 하나로 통일
     # (V3__change_embedding_to_vector.sql의 vector(768)과 차원 일치)
     embedding-model: nomic-embed-text
+    # 임베딩 1회 호출에 넣는 최대 글자 수. codescope.embedding.document-max-chars
+    # 이상으로 두어 문서 하나 = 호출 1번이 되게 한다(nomic-embed-text 문맥
+    # 2048토큰 — 영어 2000자 ≈ 500토큰이라 여유 있음. 넘치면 Ollama가 뒤를 잘라냄)
+    chunk-size: 2000
     # 왜 connect-timeout 3초/read-timeout 20초인가: 타임아웃이 아예 없어서
     #   생기는 무한 대기를 막기 위해 명시적으로 추가함. read-timeout을
     #   GitHub보다 길게 잡은 이유: OllamaEmbeddingService가 청크(500자)
@@ -330,6 +334,11 @@ codescope:
   # queue-capacity=20: 무제한 큐로 인한 메모리 소진을 막기 위한 상한 —
   # 가득 차면 RejectedExecutionException → 기존 @RetryableTopic 배선으로
   # 재시도/DLT 처리됨(EmbedConsumer 주석 참고).
+  # 임베딩 입력 문서 구성(EmbeddingDocumentBuilder): 이름·설명·언어 + 정리된
+  # README 앞부분, 최대 이 글자 수. README 전체(평균 82청크, 최대 661청크)를
+  # 평균 내던 방식 대비 호출 수와 의미 희석(허브화)을 함께 줄인다
+  embedding:
+    document-max-chars: 2000
   embed-worker:
     pool-size: 6
     queue-capacity: 20
