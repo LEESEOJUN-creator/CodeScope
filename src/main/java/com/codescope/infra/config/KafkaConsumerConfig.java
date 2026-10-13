@@ -1,5 +1,6 @@
 package com.codescope.infra.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
@@ -20,7 +21,8 @@ public class KafkaConsumerConfig {
     //   그래서 팩토리는 하나로 두되, 값 타입만 Object로 정직하게 표기한다.
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, Object> kafkaListenerContainerFactory(
-            ConsumerFactory<String, Object> consumerFactory) {
+            ConsumerFactory<String, Object> consumerFactory,
+            @Value("${spring.kafka.listener.auto-startup:true}") boolean autoStartup) {
 
         ConcurrentKafkaListenerContainerFactory<String, Object> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
@@ -32,6 +34,17 @@ public class KafkaConsumerConfig {
         // MANUAL: ack.acknowledge() 호출 시점에 커밋 요청을 큐에 쌓고,
         //         다음 poll 전에 실제 커밋 (성능과 제어를 절충)
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL);
+
+        // 왜 auto-startup을 직접 읽는가: 이 팩토리는 Boot 자동 설정(configurer)을
+        //   거치지 않고 직접 만들어서, spring.kafka.listener.auto-startup이 저절로
+        //   적용되지 않는다. 표준 속성명을 그대로 받아 연결한다.
+        // 왜 필요한가: @SpringBootTest 컨텍스트가 뜨면 리스너가 개발용 Kafka(9094)에
+        //   실제 앱과 "같은 그룹 ID"로 붙어 파티션을 나눠 가졌다. 테스트 중 개발 앱의
+        //   임베딩 메시지를 가로채 처리할 수 있었고(일부 테스트는 임베딩을 mock으로
+        //   바꿔 가짜 벡터를 저장할 수 있음), DLT도 다시 읽었다. Gradle 테스트
+        //   태스크가 이 값을 false로 넘긴다(build.gradle). retry/DLT 리스너도 이
+        //   팩토리로 만들어지므로 함께 꺼진다.
+        factory.setAutoStartup(autoStartup);
         return factory;
     }
 }
