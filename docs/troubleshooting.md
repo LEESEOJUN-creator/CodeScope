@@ -20,6 +20,21 @@
 - [EmbedConsumer poll 스레드 분리 + RestClient 타임아웃 실측 검증 (근본 리팩토링)](#embedconsumer-poll-스레드-분리--restclient-타임아웃-실측-검증-근본-리팩토링)
 - [RAG 레포 추천(RepoRecommendService) 구현 및 llama3.2:3b 반복 생성 열화 실측](#rag-레포-추천repo-recommendservice-구현-및-llama323b-반복-생성-열화-실측)
 - [nomic-embed-text 한국어 검색 한계 발견](#nomic-embed-text-한국어-검색-한계-발견)
+- [로컬 실측 + Claude 전환 과정에서 드러난 문제들 (2026-10-13)](#로컬-실측--claude-전환-과정에서-드러난-문제들-2026-10-13)
+  1. [`application.yaml` 블록 중첩으로 Kafka·JPA 설정이 통째로 무시됨](#1-applicationyaml-블록-중첩으로-kafkajpa-설정이-통째로-무시됨)
+  2. [민감 파일 차단 훅이 macOS에서 실행조차 안 됨](#2-민감-파일-차단-훅이-macos에서-실행조차-안-됨)
+  3. [생성 LLM 교체(Ollama → Claude)와 API 게이트웨이 키](#3-생성-llm-교체ollama--claude와-api-게이트웨이-키)
+  4. [LLM 응답 대기 중 DB 커넥션 점유 → 풀 고갈](#4-llm-응답-대기-중-db-커넥션-점유--풀-고갈-부하테스트-최대-발견)
+  5. [LLM 대기열 무한 증가 → 대기 상한 + 503](#5-llm-대기열-무한-증가--대기-상한--503-load-shedding)
+  6. [임베딩 큐 버스트 → 레포가 영구 FAILED](#6-임베딩-큐-버스트--레포가-영구-failed)
+  7. [DLT 오프셋 미커밋 → 재기동마다 재처리](#7-dlt-오프셋-미커밋--재기동마다-정상-레포를-failed로-되돌림)
+  8. [`@SpringBootTest`가 개발용 Kafka 컨슈머 그룹에 붙음](#8-springboottest가-개발용-kafka의-실제-컨슈머-그룹에-붙음)
+  9. [stub 부하테스트가 실데이터를 오염시킴](#9-stub-부하테스트가-실데이터를-오염시킴)
+  10. [임베딩 입력: README 전체 청크 평균 → 앞부분](#10-임베딩-입력-readme-전체-청크-평균--메타데이터--정리된-앞부분)
+  11. [`GET /api/repos`가 0건 — inner JOIN FETCH](#11-get-apirepos가-0건--inner-join-fetch)
+  12. [트렌드 랭킹을 "쓰는" 곳이 없음](#12-트렌드-랭킹을-쓰는-곳이-없음)
+  13. [검색 키워드가 이름에만 매칭](#13-검색-키워드가-이름에만-매칭)
+  14. [프론트엔드: 새로고침 로그아웃 / 그리드 넘침](#14-프론트엔드-새로고침하면-로그아웃된-것처럼-보임--카드-그리드-넘침)
 
 ## N+1 문제 재현 및 해결 (Fetch Join)
 
@@ -1223,3 +1238,122 @@ prefix — 실제 코드와 동일 조건)**:
 
 **오늘은 코드 변경 없이 기록만 남김** — 현재 사용 패턴에서는 실질적
 영향이 없다고 판단.
+
+## 로컬 실측 + Claude 전환 과정에서 드러난 문제들 (2026-10-13)
+
+macOS 로컬 환경(kind 클러스터 + 호스트 앱)으로 옮기면서 처음으로 **실데이터 30건이 흐르는 상태**에서 앱 전체를 돌렸다. 생성 LLM을 Ollama에서 Claude API로 바꾸고, k6·Prometheus·JFR로 부하테스트를 하면서 문제가 연쇄적으로 드러났다. 대부분 "테스트는 통과하는데 실제로 돌리면 깨지는" 종류였다.
+수치 상세는 [`docs/performance/llm-tx-boundary-and-embed-burst.md`](performance/llm-tx-boundary-and-embed-burst.md)에 있다.
+
+### 1. `application.yaml` 블록 중첩으로 Kafka·JPA 설정이 통째로 무시됨
+
+- **증상:** 겉으로는 정상이었다. 실데이터로 띄워 보기 전까지 아무도 몰랐다.
+- **원인:** 프론트 연동 커밋(`4510da9`)에서 `cors:`와 `frontend:` 블록이 `spring:` 블록 한가운데 끼어들었다. 그 아래 `jpa:`, `data:`, `kafka:`가 들여쓰기상 `frontend.*`로 파싱됐고, Spring은 모르는 키라 **조용히 무시**했다.
+  - JsonSerializer/Deserializer, `acks: all`, `bootstrap-servers: localhost:9094`, `max.poll.interval.ms`, `ddl-auto: validate`가 전부 적용되지 않았다.
+- **확인:** SnakeYAML(Spring이 쓰는 파서)로 직접 파싱했다. `spring` 하위 키가 `[application, threads, task, security, datasource]`뿐이었다.
+- **해결:** 두 블록을 `spring:` 밖으로 옮겼다(`4250857`).
+- **검증:** 실제 기동 로그에서 `bootstrap.servers = [localhost:9094]`, JsonDeserializer 적용, Flyway와 Hibernate validate 통과를 확인했다.
+- **교훈:** YAML 들여쓰기 실수는 컴파일도 테스트도 잡지 못한다. 설정을 바꿨다면 실제 기동 로그에서 값이 반영됐는지 확인한다.
+
+### 2. 민감 파일 차단 훅이 macOS에서 실행조차 안 됨
+
+- **증상:** `.claude/settings.json`의 PreToolUse 훅이 `.env` 접근을 막지 못했다.
+- **원인:** 훅 명령이 `python`으로 고정돼 있었는데, macOS(Homebrew)에는 `python3`만 있다. 훅은 `command not found`로 실패했고, 실패는 차단(exit 2)이 아니라서 접근이 그대로 허용됐다.
+- **해결:** python3이 있으면 python3을, 없으면(Windows) python을 쓰게 했다(`dfed9a7`). `.env`는 exit 2로 차단되고 일반 파일은 exit 0으로 통과하는 것을 확인했다.
+- **같은 맥락:** `.env`를 vim으로 열면 생기는 `.env.swp`(키가 그대로 담김)가 `.gitignore`의 `.env`(정확 일치) 규칙에 걸리지 않았다. `.env.*`, `!.env.example`, `*.swp`를 추가했다(`7064952`).
+
+### 3. 생성 LLM 교체(Ollama → Claude)와 API 게이트웨이 키
+
+- **배경:** 로컬 CPU 추론(llama3.2:3b)은 1.3~1.9 tok/s라 추천 1건에 90~160초가 걸렸다. 반복 생성 열화와 다국어 혼입도 있었다(위 RAG 절).
+- **해결:** `LlmClient` 구현체로 `ClaudeLlmClient`(공식 Java SDK)를 추가하고 `llm.generation.provider`로 고르게 했다. 임베딩은 Claude API에 임베딩 엔드포인트가 없어서 Ollama를 유지했다.
+- **문제:** 사용자 키가 Anthropic 직접 키가 아니라 Messages API 호환 게이트웨이 전용이었다. 그래서 `api.anthropic.com`에서 401이 났다.
+  - `llm.claude.base-url`(`ANTHROPIC_BASE_URL`)을 설정으로 빼서 해결했다(`c41512b`). 기본값은 Anthropic 공식 주소다.
+- **검증:** 실제 호출 1회에서 pgvector 후보 목록 안에서만 골라 한국어로 답했고, refusal fallback(beta) 파라미터도 받아들여졌다.
+
+### 4. LLM 응답 대기 중 DB 커넥션 점유 → 풀 고갈 (부하테스트 최대 발견)
+
+- **증상:** stub LLM(2초 지연)으로 mixed 시나리오를 초당 20건 걸었다. LLM과 무관한 단순 조회까지 p95가 **정확히 30초**(Hikari connectionTimeout)였고, 실패율 12.9%, Hikari active 10 / pending 211이었다. GC 최대 pause는 18ms, CPU는 3%라 원인이 아니었다.
+- **원인:**
+  - `RepoRecommendService`와 `TrendAnalysisService`의 **클래스 레벨 `@Transactional`**이 LLM 응답을 기다리는 수 초 동안 커넥션을 붙잡고 있었다.
+  - 여기에 **OSIV**(기본 on)가 겹쳐 요청이 끝날 때까지 커넥션이 반환되지 않았다.
+  - 그래서 DB를 보호하려던 세마포어 설계가 트랜잭션 범위 때문에 무력화됐다.
+- **해결(`4023d72`):**
+  - `open-in-view: false`
+  - 추천: 클래스 트랜잭션을 제거하고, pgvector 검색 결과를 프로젝션으로 바로 받는다. 덤으로 후보 10개를 지연 로딩하던 N+1도 사라졌다.
+  - 트렌드: "조회 → LLM(트랜잭션 밖) → upsert(`ON CONFLICT`) 한 문장"으로 나눴다. 동시 INSERT 경합도 같이 사라졌다.
+  - 같은 레포에 캐시 미스가 동시에 몰릴 때 LLM이 중복 호출되지 않도록 `@Cacheable(sync = true)`를 걸었다.
+- **검증:** 같은 조건에서 일반 조회 p95가 30s에서 **9.41ms**로, 실패율이 0%로, pending이 0으로 바뀌었다.
+  - 회귀 테스트 `LlmCallTransactionBoundaryTest`는 LLM이 호출되는 순간 그 스레드에 트랜잭션, EntityManager, 커넥션이 없는지 검사한다. `@Transactional`을 다시 붙이면 실패하는 것도 확인했다.
+
+### 5. LLM 대기열 무한 증가 → 대기 상한 + 503 (load shedding)
+
+- **증상:** 4번을 고친 뒤에도 추천 p95가 57초였다. claudeSemaphore 대기가 최대 171까지 쌓였다. 처리 상한(permits 4 / 2초 ≈ 초당 2건)보다 유입이 많았기 때문이다.
+- **해결(`b95d6ed`):**
+  - `LlmAdmissionControl`이 세마포어를 `tryAcquire(5s)`로 얻는다. 상한을 넘기면 `LlmOverloadedException`을 던지고, 이를 **503 + Retry-After**로 응답한다.
+  - 거절 횟수는 `codescope_llm_shed_total` 지표로 Grafana에 노출한다.
+- **검증:** 추천 p95 57.3s → **7.1s**, 트렌드 47.5s → 6.76s. 서버 오류는 0%이고 LLM 요청의 41.7%가 503으로 즉시 거절됐다. 처리 용량보다 유입이 많다는 사실이 숫자로 드러난 것이고, permits를 조정할 근거가 된다.
+
+### 6. 임베딩 큐 버스트 → 레포가 영구 FAILED
+
+- **증상:** 첫 수집 사이클에서 30건 중 3건이 FAILED로 확정됐다.
+- **원인:**
+  - 30건이 한꺼번에 들어와 워커 6 + 큐 20을 넘었고, 즉시 거절(`AbortPolicy`)됐다.
+  - 재시도 백오프는 1초, 2초(총 약 3초)인데 큐가 비는 데는 **약 37초**가 걸렸다. 재시도를 다 쓴 메시지가 DLT로 갔다.
+- **해결(`7732b86`):**
+  - `BoundedWaitPolicy`: 큐가 차면 최대 60초까지 자리가 나길 기다린다.
+  - `max.poll.records=10`: 최악의 poll 간격이 60초 × 10 = 10분이 되어 15분 상한 안에 든다.
+- **검증:** 같은 30건 버스트를 실제 수집으로 재현했다. 거절 0건, 30건 모두 EMBEDDED였다.
+
+### 7. DLT 오프셋 미커밋 → 재기동마다 정상 레포를 FAILED로 되돌림
+
+- **증상:** 앱이 뜨자마자 예전 DLT 레코드 3건이 다시 처리됐다(람다 해시까지 같았다).
+- **원인:** 컨테이너가 `AckMode.MANUAL`인데 두 `@DltHandler`가 `Acknowledgment`를 받지 않았다. `embed-group-dlt`의 커밋 오프셋은 `-`, 로그 끝은 3이었다. 그래서 앱이나 테스트 컨텍스트가 뜰 때마다 DLT를 처음부터 다시 읽었다.
+- **해결:** 두 DLT 핸들러에서 `ack.acknowledge()`를 호출하게 했다. 이미 처리된 기존 레코드는 `--reset-offsets --to-latest`로 정리했다. 고친 코드가 그 3건을 마지막으로 한 번 더 처리하면 방금 정상화한 레포가 FAILED로 뒤집히기 때문이다.
+
+### 8. `@SpringBootTest`가 개발용 Kafka의 실제 컨슈머 그룹에 붙음
+
+- **증상:** 테스트를 실행하면 리스너가 `localhost:9094`의 `embed-group` 등에 합류하는 로그가 나왔다. 개발 앱이 함께 떠 있으면 파티션을 나눠 가져, 임베딩을 mock으로 바꾼 테스트가 실제 메시지를 처리할 수 있었다.
+- **원인:** 커스텀 리스너 팩토리라서 `spring.kafka.listener.auto-startup`이 자동으로 적용되지 않았다.
+- **해결(`bafec66`):** 팩토리가 이 속성을 읽게 하고, Gradle 테스트 태스크에서만 `false`로 넘긴다.
+  - 회귀 테스트 `KafkaListenerTestIsolationTest`: 등록된 컨테이너가 하나도 실행되지 않는지 검사한다.
+
+### 9. stub 부하테스트가 실데이터를 오염시킴
+
+- **증상:** 부하테스트 후 `trend_scores`에 `[stub] 부하테스트용 고정 응답` 20행이 남았고, Redis 캐시(1시간)에도 같은 응답이 있었다. 이후 실제 앱이 이 캐시를 사용자에게 내보낼 수 있었다.
+- **해결:** `scripts/loadtest-cleanup.sh`를 추가했다.
+- **함정:** 포트가 닫히자마자 정리했더니 4행이 다시 생겼다. graceful shutdown은 포트를 먼저 닫고, 세마포어 대기열에 남은 요청을 마저 처리하면서 DB에 쓰기 때문이다. 스크립트는 앱 프로세스가 살아 있으면 중단하도록 했다.
+
+### 10. 임베딩 입력: README 전체 청크 평균 → 메타데이터 + 정리된 앞부분
+
+- **증상:** README 청크 수가 평균 82개, 최대 661개(awesome-selfhosted)였다. 레포 하나가 Ollama 호출 수백 번을 차지했다. 또 목록형 README의 평균 벡터가 흐려져, 무관한 질의의 상위 3위에 끼어드는 허브가 됐다.
+- **해결(`070fec3`):** `EmbeddingDocumentBuilder`로 이름·설명·언어 + 배지/이미지/HTML/URL/코드블록을 걷어낸 README 앞부분 최대 2,000자를 만들어 1회 호출한다.
+- **검증:** `scripts/embedding-eval.py`(정답 질의 12개)로 비교했다.
+  - Ollama 호출: 레포당 평균 82회 → 1회
+  - 30건 임베딩: 약 37초 → 1.8초
+  - MRR@10: 0.861 → 0.938
+
+### 11. `GET /api/repos`가 0건 — inner JOIN FETCH
+
+- **증상:** DB에는 레포가 30건인데 전체 목록 API가 빈 배열을 돌려줬다.
+- **원인:** `findAllWithTopics()`가 `JOIN FETCH`(inner join)라서 토픽이 없는 레포가 결과에서 빠졌다. 수집 파이프라인은 토픽을 저장하지 않는다. N+1 테스트는 픽스처에 토픽을 넣어 두어서 이 경우를 잡지 못했다.
+- **해결(`2272627`):** `SELECT DISTINCT ... LEFT JOIN FETCH`. N+1 검증 테스트 4개는 그대로 통과했다(쿼리 1번 유지).
+
+### 12. 트렌드 랭킹을 "쓰는" 곳이 없음
+
+- **증상:** `GET /api/repos/trending`이 항상 빈 목록이었다.
+- **원인:** `TrendService.increaseScore`(ZINCRBY)를 호출하는 코드가 어디에도 없었다. 읽는 쪽만 구현돼 있었다.
+- **해결(`2272627`):** `CollectConsumer`가 저장 직후 `updateScore`(ZADD, 스타 수)를 호출한다.
+  - ZINCRBY가 아니라 ZADD인 이유: Kafka at-least-once 재전달 시 누적 방식은 점수가 부풀지만, 덮어쓰기는 몇 번 처리돼도 결과가 같다(멱등).
+- **한계:** 점수가 현재 스타 수라서 "급상승"이 아니라 "수집된 트렌딩 레포 중 인기 순"이다. 증가량 기반 랭킹은 스타 수 이력이 필요하다.
+
+### 13. 검색 키워드가 이름에만 매칭
+
+- **증상:** "agent"로 검색하면 설명이 "The open source coding agent"인 opencode가 빠졌다.
+- **해결(`5095724`):** 조건을 `name OR description` containsIgnoreCase로 바꾸고 테스트를 추가했다.
+
+### 14. 프론트엔드: 새로고침하면 로그아웃된 것처럼 보임 / 카드 그리드 넘침
+
+- **새로고침 로그아웃:** Access Token은 XSS 노출을 줄이려고 메모리에만 둔다. 그래서 새로고침하면 사라지고, 헤더 메뉴도 함께 사라졌다.
+  - 앱이 시작될 때 HttpOnly refresh 쿠키로 조용히 재발급받게 했다.
+  - 보호 화면은 이 복구 시도가 끝난 뒤(`ready`)에만 로그인 여부를 판단한다.
+  - 동시에 여러 요청이 401을 받아도 refresh는 한 번만 나가도록 진행 중인 Promise를 공유한다. refresh는 토큰을 회전시키기 때문에, 두 번 나가면 재사용 감지로 로그아웃될 수 있다.
+- **그리드 넘침:** `repeat(3, 1fr)` 열이 긴 레포 이름(`nowrap`)의 최소 콘텐츠 폭만큼 늘어나 화면 밖으로 밀렸다. `repeat(3, minmax(0, 1fr))`로 고쳤다.
