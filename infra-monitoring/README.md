@@ -1,5 +1,18 @@
 # Day 35 부하 테스트 인프라
 
+## 로컬 앱 모니터링
+
+`bash scripts/local-up.sh --app --monitoring`으로 앱과 관측 스택을 함께 준비한다.
+로컬 kind overlay는 `monitoring` 프로파일로 지표만 켜며 실제 Claude/Ollama 제공자를 바꾸지 않는다.
+
+- Grafana: http://localhost:3001/d/codescope-jvm (JVM / GC / 배압)
+- 수집 상태: http://localhost:9090/targets — `codescope`가 UP이어야 한다.
+- 앱 지표: http://localhost:8080/actuator/prometheus
+- k6/JMeter 대시보드는 해당 도구가 InfluxDB에 결과를 보낸 시간대에만 데이터가 나온다.
+- 5xx가 한 번도 발생하지 않았거나 현재 GC가 concurrent 수집기가 아니면 해당 패널은 `No data`일 수 있다. 전체 수집 장애 여부는 `codescope` 타깃의 UP 상태로 구분한다.
+- 401이면 앱에 `monitoring` 프로파일이 적용됐는지, connection refused이면 8080 port-forward를 확인한다.
+- `local-up.sh`는 tmux가 설치되어 있으면 앱 port-forward를 별도 세션에서 유지한다.
+
 사람이 직접 JMeter GUI / Grafana / JDK Mission Control로 결과를 보는 게 목표.
 이 문서는 그 세 도구를 실제로 켜고 연결하는 방법과, 왜 이렇게 설계했는지를 남긴다.
 

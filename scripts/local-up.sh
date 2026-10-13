@@ -143,12 +143,12 @@ if $DEPLOY_APP; then
   [[ -f "$ENV_FILE" ]] || { echo "--app에는 .env가 필요합니다: ${ENV_FILE}" >&2; exit 1; }
 
   # 8080을 이미 누가 쓰고 있으면(bootRun 또는 기존 port-forward) 판단해서 처리
-  if port_open 8080 && ! pgrep -f 'kubectl port-forward svc/codescope' >/dev/null; then
+  if port_open 8080 && ! pgrep -f 'kubectl( --context [^ ]+)? port-forward svc/codescope ' >/dev/null; then
     echo '8080이 이미 사용 중입니다(bootRun 실행 중?). 같은 Kafka 컨슈머 그룹을 나눠 가지게 되므로 먼저 종료하세요.' >&2
     exit 1
   fi
 
-  if port_open 3000 && ! pgrep -f 'kubectl port-forward svc/codescope-frontend' >/dev/null; then
+  if port_open 3000 && ! pgrep -f 'kubectl( --context [^ ]+)? port-forward svc/codescope-frontend ' >/dev/null; then
     echo '3000이 이미 사용 중입니다(npm run dev / next start 실행 중?). 먼저 종료하세요.' >&2
     exit 1
   fi
@@ -190,8 +190,8 @@ if $DEPLOY_APP; then
 
   # port-forward는 svc가 아니라 시작 시점의 Pod 하나에 붙는다. 재배포로 Pod가
   # 교체되면 기존 port-forward는 종료 중인 옛 Pod를 가리키다 끊기므로 다시 연다
-  pkill -f 'kubectl port-forward svc/codescope ' || true
-  pkill -f 'kubectl port-forward svc/codescope-frontend ' || true
+  pkill -f 'kubectl( --context [^ ]+)? port-forward svc/codescope ' || true
+  pkill -f 'kubectl( --context [^ ]+)? port-forward svc/codescope-frontend ' || true
   sleep 1
 fi
 
@@ -203,7 +203,12 @@ for target in codescope:8080 codescope-frontend:3000; do
   replicas="$(kubectl get "deploy/${svc}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)"
   [[ "${replicas:-0}" -gt 0 ]] || continue
   if ! port_open "$port"; then
-    nohup kubectl port-forward "svc/${svc}" "${port}:${port}" >"${LOG_DIR}/${svc}.log" 2>&1 &
+    # tmux가 있으면 실행 도구/터미널이 끝나도 접속을 유지한다.
+    if command -v tmux >/dev/null 2>&1; then
+      tmux new-session -d -s "codescope-pf-${svc}" kubectl --context "kind-${CLUSTER_NAME}" port-forward "svc/${svc}" "${port}:${port}"
+    else
+      nohup kubectl port-forward "svc/${svc}" "${port}:${port}" >"${LOG_DIR}/${svc}.log" 2>&1 &
+    fi
     sleep 3
   fi
   port_open "$port" && ok "${svc} http://localhost:${port}" || warn "${port} 응답 없음 — 로그 확인: ${LOG_DIR}/${svc}.log"

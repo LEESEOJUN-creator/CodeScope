@@ -67,9 +67,9 @@ public class SecurityConfig {
                     }
 
                     // Prometheus 스크랩(부하테스트 중 JVM/GC/HikariCP 지표 수집)도
-                    // 같은 원칙 — 엔드포인트 노출 자체가 application-loadtest.yaml에만
-                    // 있고, permitAll 규칙도 loadtest 프로파일일 때만 추가한다.
-                    if (environment.acceptsProfiles(Profiles.of("loadtest"))) {
+                    // 명시적으로 켠 monitoring/loadtest에서만 지표 조회를 허용한다.
+                    // monitoring은 실제 AI provider와 수집 스케줄러를 유지한다.
+                    if (environment.acceptsProfiles(Profiles.of("loadtest", "monitoring"))) {
                         auth.requestMatchers(HttpMethod.GET, "/actuator/prometheus").permitAll();
                     }
 

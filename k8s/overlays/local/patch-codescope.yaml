@@ -17,6 +17,8 @@ spec:
             - secretRef:
                 name: codescope-secrets
           env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: monitoring
             # Ollama는 Pod가 아니라 Mac 호스트에서 돈다. Docker Desktop은
             # 컨테이너(kind 노드 포함)에서 호스트로 가는 이름을 제공한다
             # (relaxed binding: LLM_OLLAMA_BASEURL -> llm.ollama.base-url)

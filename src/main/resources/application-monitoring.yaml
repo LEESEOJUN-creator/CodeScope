@@ -1,0 +1,13 @@
+# 로컬 실제 앱 관찰용. AI provider와 스케줄러 설정을 바꾸지 않는다.
+# 외부 배포에서는 별도의 인증·네트워크 접근 제어가 필요하다.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  metrics:
+    tags:
+      application: codescope
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true

@@ -15,9 +15,9 @@ step() { printf '\033[36m==> %s\033[0m\n' "$1"; }
 ok()   { printf '\033[32m  OK  %s\033[0m\n' "$1"; }
 
 step 'port-forward 프로세스 정리 중...'
-# 커맨드라인이 "kubectl port-forward svc/"인 것만 골라 죽인다 —
-# 다른 목적의 kubectl 프로세스(로그 확인 등)를 실수로 같이 죽이지 않기 위함
-if pkill -f 'kubectl port-forward svc/'; then
+# local-up.sh의 명시적 context 형식과 기존 형식을 모두 정리한다.
+# CodeScope 서비스만 대상으로 하며 다른 클러스터의 명시적 context는 제외한다.
+if pkill -f "kubectl( --context kind-${CLUSTER_NAME})? port-forward svc/(codescope|codescope-frontend|postgres|redis|kafka-headless) "; then
   ok 'port-forward 종료함'
 else
   ok '정리할 port-forward 프로세스가 없습니다.'
@@ -26,8 +26,8 @@ fi
 # local-up.sh --app으로 띄운 앱 Pod도 내린다 — 남겨두면 이후 bootRun과 같은
 # Kafka 컨슈머 그룹을 나눠 가진다. 이미지/시크릿은 남으므로 --app으로 다시 올릴 수 있다
 for d in codescope codescope-frontend; do
-  if kubectl get "deploy/${d}" >/dev/null 2>&1; then
-    kubectl scale "deploy/${d}" --replicas=0 >/dev/null
+  if kubectl --context "kind-${CLUSTER_NAME}" get "deploy/${d}" >/dev/null 2>&1; then
+    kubectl --context "kind-${CLUSTER_NAME}" scale "deploy/${d}" --replicas=0 >/dev/null
     ok "클러스터 ${d} Pod를 0으로 줄임"
   fi
 done
