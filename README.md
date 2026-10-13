@@ -10,16 +10,34 @@ GitHub Trending은 순위만 보여줄 뿐 "왜 뜨는가", "내가 기여할 �
 
 ```mermaid
 flowchart LR
-    A[GitHub API 수집] -->|Kafka Producer| B[(Kafka)]
-    B -->|Consumer| C[임베딩 파이프라인\nOllama/OpenAI]
-    C --> D[(PostgreSQL + pgvector)]
-    D --> E[RAG 유사 프로젝트 추천]
-    D --> F[트렌드 분석]
-    E --> G[사용자]
-    F --> G
+    A[GitHub API 수집\n10분 주기] -->|codescope.collect| B[(Kafka)]
+    B -->|CollectConsumer| D[(PostgreSQL\n+ pgvector)]
+    B -->|CollectConsumer| R[(Redis\n트렌드 랭킹·캐시)]
+    B -->|codescope.embed| C[EmbedConsumer\n워커 풀]
+    C -->|README 앞부분 임베딩| O[Ollama\nnomic-embed-text]
+    C --> D
+    U[Next.js 프론트] -->|REST| S[Spring Boot API]
+    S --> D
+    S --> R
+    S -->|질의 임베딩| O
+    S -->|추천·트렌드 분석 생성| L[Claude API]
 ```
 
 수집 → Kafka → 임베딩 → pgvector 저장 → RAG 추천 / 트렌드 분석 순으로 이어지는 파이프라인이다. 중간 단계 실패로 임베딩이 없는 레포가 섞이지 않도록, RAG 추천 쿼리는 `ProcessStatus=EMBEDDED`인 레포만 대상으로 한다.
+
+## 주요 기능
+
+| 기능 | 화면 | 동작 |
+|---|---|---|
+| 레포 탐색 | `/explore` | 키워드(이름·설명)·언어·최소 스타 필터, 페이지네이션 (QueryDSL 동적 쿼리) |
+| 트렌드 랭킹 | `/`, `/trending` | 수집 시 Redis Sorted Set에 스타 수를 멱등(ZADD) 반영해 순위 조회 |
+| AI 트렌드 분석 | `/repos/{id}` | "왜 뜨는가"를 지표만 근거로 Claude가 분석 (Redis 1시간 캐시 + DB 영구 저장) |
+| AI 레포 추천 (RAG) | `/recommend` | 스택 → 질의 임베딩 → pgvector 유사도 상위 10개 → Claude가 그 목록 안에서만 추천 |
+| 관심 스택 | `/me` | 로그인 사용자의 스택 저장 → 입력 없이 "내 스택으로 추천" |
+| 즐겨찾기 | `/favorites` | 레포 북마크 (UserFavorite 매핑 엔티티) |
+| 로그인 | `/login` | GitHub OAuth → JWT Access(메모리) + Refresh(HttpOnly 쿠키, Redis 회전) |
+
+로그인 없이도 탐색·트렌드·상세·AI 추천을 쓸 수 있고, 로그인하면 즐겨찾기와 관심 스택이 열린다.
 
 ## 기술 스택
 
@@ -32,9 +50,10 @@ flowchart LR
 | Redis | 트렌드 랭킹(Sorted Set)·캐싱·중복 수집 방지 락에 활용 |
 | Kafka | 브로커에 영속 저장되어 앱 재시작에도 작업이 유실되지 않음 |
 | Flyway | 스키마 변경 이력을 코드로 관리해 팀/환경 간 정합성 확보 |
-| Ollama | 로컬 환경에서 비용 없이 임베딩·생성 모델을 실험 |
+| Claude API (공식 Java SDK) | 추천·트렌드 분석 텍스트 생성. 로컬 CPU 추론(1.3~1.9 tok/s, 1건 90~160초)과 소형 모델의 반복·다국어 열화 한계로 교체 |
+| Ollama (nomic-embed-text) | 임베딩. Claude API에는 임베딩 엔드포인트가 없고, 로컬이라 비용 0 |
 | GitHub OAuth + JWT | 서비스 정체성과 맞고, 비밀번호 직접 관리 부담을 줄임 |
-| Next.js | 프론트엔드 |
+| Next.js 16 + React 19 | 프론트엔드 (UI 라이브러리 없이 CSS 변수 기반 다크 테마) |
 | kind (로컬 K8s) | 로컬에서 실제 K8s 환경을 그대로 재현 |
 | GitHub Actions + ArgoCD | CI/CD와 GitOps 기반 배포 자동화 |
 
@@ -66,6 +85,14 @@ flowchart LR
 
 페이징이 필요 없는 목록 조회는 JOIN FETCH로 해결했다. 다만 컬렉션 fetch join과 페이징을 함께 쓰면 Hibernate가 메모리 페이징을 하게 되는 문제가 있어, 페이징이 필요한 동적 검색 API(`GithubRepositoryQueryRepository`)는 QueryDSL의 `BooleanBuilder`로 조건을 조합하고 topics는 fetch 대신 `@BatchSize(size = 100)`로 배치 조회(`WHERE repo_id = any(?)` 1번)하도록 분리했다.
 
+## LLM 호출 설계
+
+- **구현체 교체가 설정 하나로:** `LlmClient`와 `EmbeddingService` 인터페이스 뒤에 Claude, Ollama, stub 구현체가 있다. `llm.generation.provider`와 `llm.embedding.provider`로 고르고, 호출부는 어떤 모델인지 모른다.
+- **트랜잭션 밖에서 호출:** LLM 응답을 기다리는 수 초 동안 DB 커넥션을 쥐지 않도록 OSIV를 끄고 서비스 트랜잭션을 "조회 → LLM → 저장"으로 나눴다. 회귀 테스트 `LlmCallTransactionBoundaryTest`가 이를 검사한다.
+- **입장 제어(load shedding):** 동시 호출은 세마포어로 제한한다. 대기가 5초를 넘으면 무한정 기다리지 않고 **503 + Retry-After**로 즉시 돌려보낸다. 프론트는 카운트다운 후 재시도를 안내한다.
+- **비용 통제:** 트렌드 분석은 상세 화면에서 버튼을 눌러야 요청하고, Redis에 1시간 캐싱한다. 같은 레포에 캐시 미스가 동시에 몰리면 `@Cacheable(sync = true)`로 1회만 호출한다. 토큰 사용량은 Prometheus 지표로 남긴다.
+- **임베딩 입력:** README 전체를 잘게 나눠 평균 내지 않는다. 이름·설명·언어와, 배지·HTML·URL을 걷어낸 README 앞부분 2,000자만 1회 호출한다. 레포당 호출이 평균 82회에서 1회로 줄었고, 검색 MRR@10은 0.861에서 0.938로 올랐다.
+
 ## 부하테스트 및 모니터링
 
 배압 제어(세마포어)를 켰을 때와 껐을 때의 차이를 실측으로 확인하기 위해 아래 도구들을 함께 사용했다.
@@ -74,6 +101,8 @@ flowchart LR
 - **k6**: 스크립트(JS) 기반이라 코드로 관리하고 CI에 연동하기 쉬움
 - **InfluxDB + Grafana**: 부하테스트 중 응답시간/처리량을 시계열로 실시간 시각화
 - **JDK Mission Control (JFR)**: 가상 스레드 pinning(`jdk.VirtualThreadPinned`) 여부를 관찰
+- **Prometheus + Grafana "JVM / GC / 배압" 대시보드**: 힙, GC pause, 할당률, HikariCP, 세마포어 대기열, LLM 거절률을 k6 결과와 같은 시간축에서 대조
+- **`./gradlew bootRunLoadTest`**: stub LLM(API 비용 0, 같은 세마포어를 거침)으로 띄우고, 힙을 고정한 채 JFR과 GC 로그를 남긴다. `-Pgc=zgc`로 GC를 비교할 수 있다. 분석은 `scripts/jfr-report.sh`가 맡는다. 자세한 절차는 [`docs/performance/loadtest-guide.md`](docs/performance/loadtest-guide.md)에 있다.
 
 ## 성능 실측 요약
 
@@ -91,14 +120,62 @@ flowchart LR
 | DB 세마포어 배압 제어 — 있음 (JMeter, `GET /api/repos/{id}` 관찰) | useSemaphore=true, reserve=2, permits=8 | 평균 16ms / 최대 325ms / 처리량 89.2 |
 | k6 부하테스트 (`repo-detail.js`, 세마포어 활성) | 10s ramp-up → 30s steady 10 VUs → 10s ramp-down | p(95)=285.21ms, 실패율 0%, threshold(`p(95)<500ms`, `rate<0.01`) 통과 |
 
+### 2026-10-13 로컬 실측 (macOS, kind + 호스트 앱, k6 mixed 20rps 1분, stub LLM 2초)
+
+| 항목 | 수정 전 | 수정 후 |
+|---|---|---|
+| LLM 무관 조회 p95 (커넥션 풀 고갈 → OSIV off + 트랜잭션 분리) | 30.0s · 실패율 12.9% · Hikari pending 211 | **9.4ms · 0% · 0** |
+| 추천 p95 (대기열 무한 증가 → 5초 상한 + 503) | 57.3s | **7.1s** (서버 오류 0%, 41.7%는 의도된 503) |
+| 30건 버스트 임베딩 (즉시 거절 → 최대 60초 대기) | 3건 영구 FAILED | **30/30 EMBEDDED** |
+| 임베딩 호출 (README 전체 청크 평균 → 앞부분 1회) | 레포당 평균 82회, 30건 약 37초 | **레포당 1회, 1.8초** |
+| 검색 품질 MRR@10 (`scripts/embedding-eval.py`) | 0.861 | **0.938** |
+
+상세: [`docs/performance/llm-tx-boundary-and-embed-burst.md`](docs/performance/llm-tx-boundary-and-embed-burst.md), [`docs/troubleshooting.md`](docs/troubleshooting.md)
+
 ## 실행 방법
 
-로컬 kind 클러스터 기준.
+### 0. 준비
 
-```powershell
-# kind 클러스터 + PostgreSQL/Redis/Kafka 등 기동
-./scripts/local-up.ps1
-
-# 종료
-./scripts/local-down.ps1
+```bash
+# macOS (Windows는 JDK 21 / Docker Desktop / kind / kubectl / k6를 각각 설치)
+brew install openjdk@21 kind kubectl k6 ollama
+ollama pull nomic-embed-text          # 임베딩 모델 (생성은 Claude API)
+cp .env.example .env                  # GitHub OAuth·토큰, JWT_SECRET, ANTHROPIC_API_KEY 등 채우기
 ```
+
+`.env`는 `.gitignore` 대상이다. Spring이 기동할 때 루트의 `.env`를 자동으로 읽는다(`spring.config.import`).
+
+### 1. 인프라 (kind: PostgreSQL + pgvector / Redis / Kafka)
+
+```bash
+./scripts/local-up.sh      # macOS·Linux  (Windows: ./scripts/local-up.ps1)
+./scripts/local-down.sh    # 종료         (Windows: ./scripts/local-down.ps1)
+```
+
+### 2. 백엔드 / 프론트엔드
+
+```bash
+./gradlew bootRun                          # http://localhost:8080 (Swagger: /swagger-ui.html)
+cd frontend && npm ci && npm run dev       # http://localhost:3000
+```
+
+API 비용 없이 화면만 확인하려면 `LLM_GENERATION_PROVIDER=stub ./gradlew bootRun`으로 띄운다.
+
+### 3. 테스트
+
+```bash
+./gradlew test                                              # 인프라(Postgres/Redis) 필요, 외부 API 호출 없음
+set -a && source .env && set +a && ./gradlew liveTest      # 실제 Claude API 1회 호출 (1센트 내외)
+```
+
+### 4. 부하테스트 · GC/JFR
+
+```bash
+cd infra-monitoring && docker compose up -d                # Grafana :3001 / Prometheus :9090 / InfluxDB :8086
+./gradlew bootRunLoadTest                                  # stub LLM + JFR + GC 로그 (build/loadtest/)
+k6 run --out influxdb=http://localhost:8086/loadtest -e REPO_IDS=4,5,6 infra-monitoring/loadtest/scenarios.js
+scripts/jfr-report.sh build/loadtest/app-g1-*.jfr          # GC·할당·pinning 리포트
+scripts/loadtest-cleanup.sh                                # 앱 종료 후, stub 분석 결과 정리
+```
+
+임베딩 방식을 바꿨다면 `scripts/embedding-eval.py`로 변경 전후의 검색 품질을 비교한다.
