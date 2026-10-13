@@ -108,6 +108,22 @@ class GithubRepositoryQueryRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
+    @DisplayName("keyword는 이름뿐 아니라 설명에서도 찾는다(대소문자 무시)")
+    void search_keyword_설명_매칭() {
+        // given: "apache"는 레포 이름(kafka)에는 없고 설명("Apache Kafka")에만 있다
+        setUpFixtures();
+        SearchCondition condition = new SearchCondition("APACHE", null, null, null);
+
+        // when
+        Page<GithubRepository> result = githubRepositoryQueryRepository.search(condition, PageRequest.of(0, 10));
+
+        // then
+        assertThat(result.getContent())
+                .extracting(GithubRepository::getFullName)
+                .containsExactly("apache/kafka");
+    }
+
+    @Test
     @DisplayName("language 조건만 주면 해당 언어의 레포지토리만 조회한다")
     void search_language만() {
         // given

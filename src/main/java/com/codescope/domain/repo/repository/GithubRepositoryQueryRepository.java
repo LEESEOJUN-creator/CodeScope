@@ -24,8 +24,11 @@ public class GithubRepositoryQueryRepository {
 
         BooleanBuilder builder = new BooleanBuilder();
 
+        // 키워드는 이름 또는 설명에서 찾는다. 이름만 보면 "agent"로 검색했을 때
+        // 설명이 "The open source coding agent"인 레포가 빠진다(화면 안내도 "이름·설명").
         if (condition.keyword() != null) {
-            builder.and(repo.name.containsIgnoreCase(condition.keyword()));
+            builder.and(repo.name.containsIgnoreCase(condition.keyword())
+                    .or(repo.description.containsIgnoreCase(condition.keyword())));
         }
         if (condition.language() != null) {
             builder.and(repo.language.eq(condition.language()));
