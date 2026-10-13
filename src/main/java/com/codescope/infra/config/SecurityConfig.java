@@ -65,6 +65,13 @@ public class SecurityConfig {
                         auth.requestMatchers(HttpMethod.POST, "/api/test/**").permitAll();
                     }
 
+                    // Prometheus 스크랩(부하테스트 중 JVM/GC/HikariCP 지표 수집)도
+                    // 같은 원칙 — 엔드포인트 노출 자체가 application-loadtest.yaml에만
+                    // 있고, permitAll 규칙도 loadtest 프로파일일 때만 추가한다.
+                    if (environment.acceptsProfiles(Profiles.of("loadtest"))) {
+                        auth.requestMatchers(HttpMethod.GET, "/actuator/prometheus").permitAll();
+                    }
+
                     auth.anyRequest().authenticated();
                 })
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(jwtAuthenticationEntryPoint))

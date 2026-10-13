@@ -2,6 +2,13 @@ spring:
   application:
     name: codescope
 
+  # 프로젝트 루트의 .env(gitignore 대상)를 설정 소스로 읽는다. 키 형식이
+  # KEY=value라 properties 파일로 그대로 해석된다. optional:이라 파일이 없어도
+  # (CI, K8s) 기동에 영향 없음. 같은 키가 OS 환경변수에도 있으면 환경변수가
+  # 우선한다(K8s Secret 주입 방식과 충돌하지 않음). 템플릿: .env.example
+  config:
+    import: optional:file:.env[.properties]
+
   threads:
     virtual:
       enabled: true
@@ -206,12 +213,42 @@ github:
 
 # ──────────────────────────────────────
 # LLM 설정
-# 왜 Ollama와 OpenAI 둘 다 설정하는가:
-#     개발 중: Ollama (로컬, 무료) → API 비용 없음
-#     배포 시: OpenAI로 전환 → 더 좋은 품질
-#     LlmClient 인터페이스로 구현체 분리 → 코드 변경 없이 전환 가능
+# 생성(LlmClient)과 임베딩(EmbeddingService)의 구현체를 각각 provider로 고른다.
+# 호출부는 인터페이스만 알기 때문에 코드 변경 없이 환경변수로 전환된다.
+#   generation.provider: claude(기본) | ollama | stub
+#   embedding.provider : ollama(기본) | stub
+#     (Claude API는 임베딩 엔드포인트를 제공하지 않는다 — 임베딩 제공자
+#      교체는 벡터 차원이 바뀌어 V5 마이그레이션 + 전체 재임베딩이 필요해
+#      별도 결정 사항으로 남겨둠)
+#   stub: 실제 모델 없이 지연만 재현하는 부하테스트 전용 구현체
+#         (StubLlmClient/StubEmbeddingService 참고, application-loadtest.yaml)
 # ──────────────────────────────────────
 llm:
+  generation:
+    provider: ${LLM_GENERATION_PROVIDER:claude}
+  embedding:
+    provider: ${LLM_EMBEDDING_PROVIDER:ollama}
+  claude:
+    # 실제 키는 환경변수로만 주입(.env / K8s Secret) — yml·Git에 절대 기록 금지
+    api-key: ${ANTHROPIC_API_KEY:}
+    model: ${CLAUDE_MODEL:claude-opus-5-5}
+    # 추천/트렌드 분석은 짧은 요약이라 low로 충분하다(ClaudeLlmClient 주석 참고)
+    effort: ${CLAUDE_EFFORT:low}
+    # 사고 토큰도 이 한도에 포함된다 — 응답 길이는 프롬프트로 제어하고,
+    # 이 값은 본문이 잘리지 않도록 하는 넉넉한 안전 상한이다
+    max-tokens: 4096
+    # 재시도 1회당 상한. 최악의 벽시계 시간 = timeout × (max-retries + 1) = 180초
+    timeout-ms: 60000
+    max-retries: 2
+    # 서버 측 refusal fallback(beta). 이를 지원하지 않는 모델(Haiku 등)로
+    # 바꿀 때는 false로 끈다
+    refusal-fallback: ${CLAUDE_REFUSAL_FALLBACK:true}
+  stub:
+    # 실측 근거가 생기면 조정할 잠정치: Claude 짧은 응답 수 초, 임베딩 수백 ms
+    generation-latency-ms: ${STUB_GENERATION_LATENCY_MS:2000}
+    embedding-latency-ms: ${STUB_EMBEDDING_LATENCY_MS:200}
+    # V3 마이그레이션의 vector(768)과 일치해야 pgvector 저장/검색이 된다
+    embedding-dimension: 768
   ollama:
     base-url: http://localhost:11434
     # nomic-embed-text: 768차원. 비용 문제로 OpenAI 임베딩/생성 모두
@@ -249,8 +286,6 @@ llm:
       # (RepoRecommendService.buildPrompt) 자연스럽게 그 안에서 끝나도록
       # 유도하는 이중 안전장치로 설계했다.
       max-tokens: 200
-  openai:
-    api-key: ${OPENAI_API_KEY:}
 
 # ──────────────────────────────────────
 # 세마포어 설정
@@ -261,11 +296,16 @@ llm:
 #   맞춰 poll 스레드 대기시간을 줄이는 것으로 우선 대응
 # ──────────────────────────────────────
 codescope:
-  # OllamaLlmClient(생성)도 이 세마포어를 공유한다 — 임베딩과 생성이
-  # 별개 하류 시스템이 아니라 동일한 로컬 Ollama 프로세스를 두드리는
+  # generation.provider=ollama일 때는 OllamaLlmClient(생성)도 이 세마포어를
+  # 공유한다 — 임베딩과 생성이 동일한 로컬 Ollama 프로세스를 두드리는
   # 것이라, 나눠봐야 실제 자원 경합은 그대로 재현됨
   # (근거는 OllamaSemaphoreConfig 클래스 주석 참고)
   ollama-semaphore:
+    permits: 4
+  # Claude API(생성) 전용. Ollama와 별개의 하류 시스템이라 분리
+  # (ClaudeSemaphoreConfig 참고). 잠정치 — 계정 rate limit과 부하테스트
+  # 실측(codescope_semaphore_queued 지표)으로 조정한다
+  claude-semaphore:
     permits: 4
   # EmbedConsumer가 poll 스레드에서 실제 임베딩 작업을 분리해 위임하는
   # 전용 워커 풀(EmbedWorkerConfig 참고).

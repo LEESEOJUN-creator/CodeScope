@@ -1,0 +1,13 @@
+# CodeScope 앱(호스트에서 ./gradlew bootRunLoadTest로 기동)의 /actuator/prometheus를 스크랩한다.
+# 이 엔드포인트는 loadtest 프로파일에서만 노출·permitAll된다(application-loadtest.yaml, SecurityConfig).
+global:
+  # 왜 5초인가(기본 1분): 부하테스트는 2~5분 단위로 짧게 돌린다. 1분 간격이면
+  #   테스트 하나에 점이 몇 개 안 찍혀 GC pause·대기열 스파이크가 묻힌다.
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: codescope
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8080"]

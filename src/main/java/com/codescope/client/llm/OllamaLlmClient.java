@@ -3,6 +3,7 @@ package com.codescope.client.llm;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -12,11 +13,12 @@ import java.util.concurrent.Semaphore;
 /**
  * Ollama(llama3.2:3b)로 텍스트를 생성하는 LlmClient 구현체.
  *
- * OpenAI 구현체는 비용 문제로 미도입. 인터페이스(LlmClient) 분리 이유는
- * 트래픽 증가 시 교체 가능성을 열어두기 위함(LlmClient 참고).
+ * 기본 생성 구현체는 ClaudeLlmClient로 교체됐다. 이 클래스는 API 비용 없이
+ * 로컬에서 돌려보고 싶을 때 llm.generation.provider=ollama로 켠다.
  */
 @Slf4j
 @Service
+@ConditionalOnProperty(name = "llm.generation.provider", havingValue = "ollama")
 public class OllamaLlmClient implements LlmClient {
 
     private final RestClient ollamaGenerationRestClient;

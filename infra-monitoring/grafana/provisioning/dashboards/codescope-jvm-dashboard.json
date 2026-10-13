@@ -1,0 +1,913 @@
+{
+  "uid": "codescope-jvm",
+  "title": "CodeScope — JVM / GC / 배압",
+  "tags": [
+    "codescope",
+    "jvm",
+    "gc",
+    "loadtest"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "HTTP — k6 부하가 실제로 서버에 어떻게 도착했나",
+      "id": 1,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "요청률 (req/s, uri별)",
+      "id": 2,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "sum by (uri) (rate(http_server_requests_seconds_count[30s]))",
+          "legendFormat": "{{uri}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "응답시간 p95 (uri별)",
+      "id": 3,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "k6가 보는 p95와 비교하면 네트워크/클라이언트 측 지연을 분리할 수 있다",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, uri) (rate(http_server_requests_seconds_bucket[30s])))",
+          "legendFormat": "{{uri}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "에러율 (5xx req/s)",
+      "id": 4,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "sum by (uri, status) (rate(http_server_requests_seconds_count{status=~\"5..\"}[30s]))",
+          "legendFormat": "{{uri}} {{status}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Heap / GC — 지연 스파이크가 GC 때문인가",
+      "id": 5,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "힙 사용량 (영역별)",
+      "id": 6,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "Old(G1 Old Gen)가 GC 후에도 계단식으로 계속 오르면 누수 의심",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "sum by (id) (jvm_memory_used_bytes{area=\"heap\"})",
+          "legendFormat": "{{id}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "B",
+          "expr": "sum(jvm_memory_max_bytes{area=\"heap\"})",
+          "legendFormat": "max"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "GC pause — 초당 누적 pause 시간",
+      "id": 7,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "1초 중 몇 초를 STW로 멈춰 있었나. 0.05 = 5% 시간 정지",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "sum by (action, cause) (rate(jvm_gc_pause_seconds_sum[30s]))",
+          "legendFormat": "{{action}} / {{cause}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "GC pause — 최대 (최근 구간)",
+      "id": 8,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "이 값이 HTTP p99 스파이크와 같은 시점에 튀면 GC가 원인",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "max by (action) (jvm_gc_pause_seconds_max)",
+          "legendFormat": "{{action}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "GC 횟수 (회/s)",
+      "id": 9,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "sum by (action) (rate(jvm_gc_pause_seconds_count[30s]))",
+          "legendFormat": "{{action}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "할당률 / 승격률",
+      "id": 10,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "할당률이 높으면 Young GC가 잦아진다. 원인 클래스/코드 위치는 JFR allocation-by-class/site로 확인",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "rate(jvm_gc_memory_allocated_bytes_total[30s])",
+          "legendFormat": "allocated (Young에 할당)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "B",
+          "expr": "rate(jvm_gc_memory_promoted_bytes_total[30s])",
+          "legendFormat": "promoted (Old로 승격)"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Concurrent GC 단계 시간 (ZGC/G1 concurrent)",
+      "id": 11,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "ZGC는 대부분의 작업을 여기서(앱과 동시에) 한다 — pause 패널과 함께 봐야 G1과 공정하게 비교된다",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "sum by (action) (rate(jvm_gc_concurrent_phase_time_seconds_sum[30s]))",
+          "legendFormat": "{{action}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "배압 — 세마포어 / 커넥션 풀",
+      "id": 12,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "세마포어 남은 permits",
+      "id": 13,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "0에 붙어 있으면 해당 하류(DB/Ollama/Claude)가 포화 상태",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 27
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "codescope_semaphore_available",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "세마포어 대기 스레드 수",
+      "id": 14,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "대기열이 계속 늘면 유입 > 처리량. 응답시간 증가의 원인이 '하류 지연'이 아니라 '대기'임을 뜻함",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 27
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "codescope_semaphore_queued",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "HikariCP 커넥션",
+      "id": 15,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "pending > 0이 지속되면 풀 고갈. dbSemaphore가 제 역할을 하면 pending은 0 근처에 머문다",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 27
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "sum(hikaricp_connections_active)",
+          "legendFormat": "active"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "B",
+          "expr": "sum(hikaricp_connections_idle)",
+          "legendFormat": "idle"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "C",
+          "expr": "sum(hikaricp_connections_pending)",
+          "legendFormat": "pending (대기)"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "CPU / 스레드 / LLM 비용",
+      "id": 16,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU 사용률",
+      "id": 17,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 36
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "process_cpu_usage",
+          "legendFormat": "process"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "B",
+          "expr": "system_cpu_usage",
+          "legendFormat": "system"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "플랫폼 스레드 수",
+      "id": 18,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "가상 스레드는 이 지표에 잡히지 않는다(캐리어 스레드만 보임). pinning은 JFR pinned-threads 뷰로 확인",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 36
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "jvm_threads_live_threads",
+          "legendFormat": "live"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "B",
+          "expr": "sum by (state) (jvm_threads_states_threads)",
+          "legendFormat": "{{state}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM 토큰 사용량 (tokens/min)",
+      "id": 19,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "실제 Claude provider일 때만 증가(stub은 0). 비용 = 토큰 × 모델 단가",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 36
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "sum by (type) (rate(codescope_llm_tokens_total[1m])) * 60",
+          "legendFormat": "{{type}}"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  }
+}

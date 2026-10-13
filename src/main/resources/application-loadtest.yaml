@@ -1,0 +1,42 @@
+# ══════════════════════════════════════════════════════════════
+# loadtest 프로파일 — 부하테스트 + GC/JFR 관찰 전용
+# 기동: ./gradlew bootRunLoadTest (build.gradle 참고, test 프로파일과 함께 켜짐)
+# 가이드: docs/performance/loadtest-guide.md
+# ══════════════════════════════════════════════════════════════
+
+# 기본값은 stub(API 비용 0). 실제 Claude 경로를 소량 검증할 때만
+# LLM_GENERATION_PROVIDER=claude로 덮어쓴다.
+llm:
+  generation:
+    provider: ${LLM_GENERATION_PROVIDER:stub}
+  embedding:
+    provider: ${LLM_EMBEDDING_PROVIDER:stub}
+
+spring:
+  jpa:
+    # 왜 끄는가: show-sql은 SQL마다 System.out.println으로 문자열을 찍는다.
+    # 부하 중엔 이 로그 문자열 할당이 GC 지표를 오염시키고(할당률·Young GC
+    # 빈도가 "앱 로직"이 아니라 "로그" 때문에 올라감), println 내부 synchronized가
+    # 가상 스레드 pinning 노이즈가 된다(build.gradle dbBackpressureJfrTest 주석과 같은 이유).
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+logging:
+  level:
+    org.hibernate.SQL: WARN
+    org.hibernate.orm.jdbc.bind: WARN
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  metrics:
+    tags:
+      application: codescope
+    distribution:
+      # p95/p99를 Prometheus histogram_quantile로 계산하려면 버킷이 필요하다
+      percentiles-histogram:
+        http.server.requests: true

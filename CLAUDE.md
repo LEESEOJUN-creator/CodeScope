@@ -18,7 +18,7 @@ CodeScope는 실시간 수집 + AI 분석 + 벡터 유사도 검색 + 사용자 
 - Database: PostgreSQL + pgvector + Flyway
 - Cache: Redis
 - Message Queue: Kafka
-- AI/LLM: Ollama (로컬) / OpenAI (배포)
+- AI/LLM: Claude API (생성, 기본) / Ollama (임베딩, 생성 대체용) / stub (부하테스트)
 - Infrastructure: kind (로컬) + k3s on Oracle Cloud (배포)
 - CI/CD: GitHub Actions + ArgoCD GitOps
 
@@ -26,7 +26,7 @@ CodeScope는 실시간 수집 + AI 분석 + 벡터 유사도 검색 + 사용자 
 com.codescope
 ├── api/controller           ← GithubRepositoryController 등
 ├── client/github             ← GitHub API 클라이언트 + OAuth 
-├── client/llm                ← Ollama/OpenAI 클라이언트 
+├── client/llm                ← Claude/Ollama/stub 클라이언트 (provider 설정으로 선택)
 ├── common/entity              ← BaseEntity
 ├── common/exception           ← GlobalExceptionHandler
 ├── common/response            ← ApiResponse<T>
@@ -92,7 +92,7 @@ User - UserSkill - Topic               : User(1)-UserSkill(N)-Topic(1)
 - 가상 스레드: I/O 대기 많은 구조(GitHub·AI·DB)에 적합.
   단, synchronized/구버전 JDBC의 pinning 이슈는 JFR(jdk.VirtualThreadPinned)로
   검증 필요, 하위 시스템 배압 제어 필수
-- 세마포어 이원화: API 세마포어(GitHub용, OpenAI용 개별 Bean, rate limit이
+- 세마포어 이원화: API 세마포어(Ollama용, Claude용 개별 Bean, rate limit이
   서로 달라 병목 구분 위해 분리)와 DB 세마포어(HikariCP maximum-pool-size와
   permits 수를 일치시켜 커넥션 풀 고갈 방지)를 분리 설계
 - 톰캣 스레드 수 자체를 줄이는 것은 안티패턴: 인바운드 요청까지 막히고,
@@ -125,6 +125,13 @@ User - UserSkill - Topic               : User(1)-UserSkill(N)-Topic(1)
 ### AI/RAG
 - RAG: 단순 LLM 호출은 환각 발생, pgvector 검색 결과를 컨텍스트로 주입해 방지.
   LangChain 없이 직접 구현해 각 단계(Retrieval/Augmented/Generation) 통제
+- 생성 Ollama → Claude API: 로컬 CPU 추론(1.3~1.9 tok/s, 추천 1건 90~160초)과
+  소형 모델의 반복/다국어 열화 한계. LlmClient 인터페이스 덕분에 구현체 추가 +
+  llm.generation.provider 설정만으로 교체(ollama로 되돌리기 가능)
+- 임베딩은 Ollama 유지: Claude API는 임베딩 엔드포인트가 없음. 제공자 교체 시
+  벡터 차원 변경 → V5 마이그레이션 + 전체 재임베딩 필요(미결정)
+- 부하테스트는 stub provider: 측정 대상은 모델 품질이 아니라 지연 모양에 대한
+  JVM/배압 반응이라, API 비용 없이 같은 세마포어를 거치는 고정 지연으로 재현
 
 ### 인증
 - GitHub OAuth: 서비스 정체성과 일치, 로그인 시 사용자 GitHub 데이터

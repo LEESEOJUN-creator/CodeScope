@@ -51,6 +51,14 @@ dependencies {
 	// Spring Actuator
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 
+	// Prometheus 레지스트리: /actuator/prometheus로 JVM(힙/GC/스레드)·HikariCP·
+	// HTTP 지표를 노출해 부하테스트 중 Grafana로 실시간 관찰한다
+	// (infra-monitoring/docker-compose.yml의 prometheus가 스크랩).
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+
+	// Anthropic Claude API 공식 Java SDK (텍스트 생성 - ClaudeLlmClient)
+	implementation 'com.anthropic:anthropic-java:2.34.0'
+
 	// WebFlux (WebClient - GitHub API, Ollama, OpenAI 호출용)
 	implementation 'org.springframework.boot:spring-boot-starter-webflux'
 
@@ -115,7 +123,8 @@ tasks.named('test') {
 	//   러너 성능 편차 때문에 결과가 흔들린다(코드리뷰 F).
 	//   부하 테스트는 "필요할 때 의도적으로" 돌리는 것이 맞다.
 	useJUnitPlatform {
-		excludeTags 'load'
+		// live: 실제 Claude API를 호출해 비용이 드는 테스트(./gradlew liveTest로만 실행)
+		excludeTags 'load', 'live'
 	}
 
 	// test 프로파일을 강제 활성화한다.
@@ -137,6 +146,54 @@ tasks.register('loadTest', Test) {
 	testClassesDirs = sourceSets.test.output.classesDirs
 	classpath = sourceSets.test.runtimeClasspath
 	systemProperty 'spring.profiles.active', 'test'
+}
+
+// 실제 외부 API(Claude)를 호출하는 스모크 테스트만 실행: ANTHROPIC_API_KEY=... ./gradlew liveTest
+// 키가 없으면 테스트가 스스로 스킵된다. 호출당 비용이 들어 기본 test·CI에서는 제외.
+tasks.register('liveTest', Test) {
+	useJUnitPlatform {
+		includeTags 'live'
+	}
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	systemProperty 'spring.profiles.active', 'test'
+	testLogging {
+		showStandardStreams = true
+	}
+}
+
+// 부하테스트용 앱 기동: ./gradlew bootRunLoadTest [-Pgc=zgc] [-Pheap=512m]
+// test 프로파일(CollectScheduler 비활성 → 백그라운드 GitHub 수집이 지표를
+// 흔들지 않음, /api/test/** 활성) + loadtest 프로파일(stub LLM, Prometheus
+// 노출, SQL 로그 끔)로 뜨고, JFR 녹화와 GC 로그를 build/loadtest/에 남긴다.
+// 가이드: docs/performance/loadtest-guide.md
+tasks.register('bootRunLoadTest', org.springframework.boot.gradle.tasks.run.BootRun) {
+	group = 'application'
+	description = '부하테스트용 기동(JFR + GC 로그 + Prometheus, stub LLM)'
+	mainClass = 'com.codescope.CodescopeApplication'
+	classpath = sourceSets.main.runtimeClasspath
+
+	def outDir = layout.buildDirectory.dir('loadtest').get().asFile
+	def stamp = new Date().format('yyyyMMdd-HHmmss')
+	// 왜 -Xms=-Xmx로 고정하는가: 힙이 실행 중에 늘었다 줄었다 하면 GC 빈도·
+	//   pause가 "부하" 때문인지 "힙 리사이징" 때문인지 구분이 안 된다.
+	//   실험 간 비교(G1 vs ZGC, 세마포어 on/off)를 위해 힙 크기를 고정한다.
+	def heap = project.findProperty('heap') ?: '512m'
+	// JDK 21의 ZGC는 -XX:+ZGenerational을 줘야 세대별 ZGC로 동작한다(기본은 비세대).
+	def gcFlags = (project.findProperty('gc') == 'zgc') ? ['-XX:+UseZGC', '-XX:+ZGenerational'] : ['-XX:+UseG1GC']
+	def gcName = (project.findProperty('gc') == 'zgc') ? 'zgc' : 'g1'
+
+	doFirst { outDir.mkdirs() }
+	jvmArgs(gcFlags + [
+		"-Xms${heap}", "-Xmx${heap}",
+		// settings=profile: 할당 샘플링·락 경합·GC 단계까지 기록하는 상세 설정.
+		// VirtualThreadPinned threshold=0ms는 dbBackpressureJfrTest와 동일한 이유(짧은 pinning 누락 방지).
+		"-XX:StartFlightRecording=filename=${outDir}/app-${gcName}-${stamp}.jfr,settings=profile,dumponexit=true,jdk.VirtualThreadPinned#threshold=0ms",
+		// 통합 로깅(-Xlog)으로 GC 이벤트 전체 + safepoint를 파일에 남긴다.
+		// JFR과 별개로 남기는 이유: GC 로그는 GCeasy 같은 외부 분석기에 그대로 넣을 수 있다.
+		"-Xlog:gc*,safepoint:file=${outDir}/gc-${gcName}-${stamp}.log:time,uptime,level,tags"
+	])
+	systemProperty 'spring.profiles.active', 'test,loadtest'
 }
 
 // DbBackpressureLoadTest 전용 JFR 진단 태스크.

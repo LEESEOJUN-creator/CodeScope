@@ -3,6 +3,7 @@ package com.codescope.client.llm;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -24,6 +25,7 @@ import java.util.concurrent.Semaphore;
  */
 @Slf4j
 @Service
+@ConditionalOnProperty(name = "llm.embedding.provider", havingValue = "ollama", matchIfMissing = true)
 public class OllamaEmbeddingService implements EmbeddingService {
 
     private static final int CHUNK_SIZE = 500;

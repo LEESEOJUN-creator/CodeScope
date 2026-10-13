@@ -21,7 +21,7 @@ import java.net.Socket;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * RepoRecommendService(RAG) 통합 테스트 — 실제 Ollama(임베딩+생성)와
+ * RepoRecommendService(RAG) 통합 테스트 — 실제 Ollama(임베딩)·Claude API(생성)와
  * 실제 Postgres(pgvector)를 사용한다.
  *
  * 왜 @SpringBootTest인가: RepoRecommendService는 EmbeddingService(실제
@@ -64,6 +64,13 @@ class RepoRecommendServiceIntegrationTest {
             Assumptions.abort(
                     "로컬 Ollama(127.0.0.1:11434)에 연결할 수 없어 테스트를 스킵합니다: " + e.getMessage());
         }
+
+        // 생성은 기본 provider인 Claude API를 쓴다(임베딩만 Ollama). 키가 없으면
+        // (CI 포함) 생성 단계에서 실패하므로 Ollama와 같은 방식으로 스킵한다.
+        // 키가 있으면 실행마다 Claude 호출 1회 분의 비용이 든다.
+        String apiKey = System.getenv("ANTHROPIC_API_KEY");
+        Assumptions.assumeTrue(apiKey != null && !apiKey.isBlank(),
+                "ANTHROPIC_API_KEY가 없어 테스트를 스킵합니다(생성 = Claude API)");
     }
 
     @AfterEach

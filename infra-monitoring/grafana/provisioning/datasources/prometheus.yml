@@ -1,0 +1,15 @@
+apiVersion: 1
+
+# influxdb.yml과 같은 방식으로 Prometheus도 자동 등록한다. uid를 고정해 두는
+# 이유: codescope-jvm-dashboard.json이 이 uid로 데이터소스를 참조하기 때문
+# (uid가 랜덤이면 대시보드를 열 때마다 "datasource not found"가 난다).
+datasources:
+  - name: Prometheus-codescope
+    uid: prometheus-codescope
+    type: prometheus
+    access: proxy
+    url: http://loadtest-prometheus:9090
+    isDefault: false
+    editable: true
+    jsonData:
+      timeInterval: 5s

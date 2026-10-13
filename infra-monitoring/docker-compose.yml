@@ -24,6 +24,24 @@ services:
       timeout: 5s
       retries: 5
 
+  # JVM(힙/GC/스레드)·HikariCP·세마포어·HTTP 지표 수집. k6 결과(InfluxDB)와
+  # 같은 Grafana에서 시간축을 맞춰 보기 위해 추가했다 — "p99가 튄 순간에 GC
+  # pause가 있었는가 / 세마포어 대기열이 찼는가"를 한 화면에서 대조하는 게 목적.
+  # 앱은 컨테이너가 아니라 호스트(IntelliJ/gradle)에서 돌기 때문에
+  # host.docker.internal로 스크랩한다(prometheus/prometheus.yml 참고).
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: loadtest-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    # Linux Docker에는 host.docker.internal이 기본으로 없어 명시적으로 매핑한다
+    # (macOS/Windows Docker Desktop은 원래 있음 — 있어도 무해).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   grafana:
     image: grafana/grafana:latest
     container_name: loadtest-grafana
@@ -41,7 +59,9 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - influxdb
+      - prometheus
 
 volumes:
   influxdb-data:
   grafana-data:
+  prometheus-data:
