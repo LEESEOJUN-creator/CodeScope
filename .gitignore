@@ -1,5 +1,9 @@
 # 환경변수 (절대 커밋 금지)
 .env
+# .env 파생 파일(.env.local, 에디터 스왑 .env.swp 등)도 키가 들어 있을 수 있어 제외. 템플릿만 추적.
+.env.*
+!.env.example
+*.swp
 *.pem
 application-secret.yml
 
