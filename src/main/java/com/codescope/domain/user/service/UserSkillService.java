@@ -43,6 +43,27 @@ public class UserSkillService {
         }
     }
 
+    // 사용자는 토픽 id가 아니라 이름("Spring Boot")으로 스택을 추가한다. 같은 이름의
+    // 토픽이 있으면(대소문자 무시) 재사용하고, 없으면 새로 만든다.
+    // 동시에 같은 새 이름이 들어오면 uk_topics_name 위반으로 실패할 수 있다 — 같은
+    // 트랜잭션 안에서는 복구할 수 없어 400으로 돌려주고, 재시도하면 기존 토픽을 찾는다.
+    @Transactional
+    public SkillResponse addSkillByName(Long userId, String rawName) {
+        String name = rawName.strip();
+        Topic topic = topicJpaRepository.findFirstByNameIgnoreCase(name)
+                .orElseGet(() -> topicJpaRepository.save(Topic.of(name)));
+
+        addSkill(userId, topic.getId());
+        return new SkillResponse(topic.getId(), topic.getName());
+    }
+
+    @Transactional
+    public void removeSkill(Long userId, Long topicId) {
+        if (userSkillJpaRepository.deleteByUserUserIdAndTopicId(userId, topicId) == 0) {
+            throw new EntityNotFoundException("등록되지 않은 관심 스택입니다. topicId=" + topicId);
+        }
+    }
+
     // 조회 조건에 userId를 포함시켜, 다른 사용자의 데이터는 애초에 조회 결과에
     // 포함되지 않도록 함. 이는 별도의 소유자 검증 단계가 아니라 쿼리 조건 자체로
     // 접근 범위를 제한하는 방식(row-level 접근 제어)임 (UserFavoriteService와 동일 근거)

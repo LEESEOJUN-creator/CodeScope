@@ -7,4 +7,7 @@ import java.util.Optional;
 
 public interface TopicJpaRepository extends JpaRepository<Topic, Long> {
     Optional<Topic> findByName(String name);
+
+    // 관심 스택 입력("java"/"Java")이 대소문자만 다른 토픽을 따로 만들지 않도록
+    Optional<Topic> findFirstByNameIgnoreCase(String name);
 }

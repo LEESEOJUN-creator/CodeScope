@@ -1,7 +1,9 @@
 package com.codescope.domain.user.service;
 
+import com.codescope.domain.user.dto.UserResponse;
 import com.codescope.domain.user.entity.User;
 import com.codescope.domain.user.repository.UserJpaRepository;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -15,6 +17,12 @@ import org.springframework.transaction.annotation.Transactional;
 public class UserService {
 
     private final UserJpaRepository userJpaRepository;
+
+    public UserResponse getMe(Long userId) {
+        return userJpaRepository.findById(userId)
+                .map(UserResponse::from)
+                .orElseThrow(() -> new EntityNotFoundException("사용자를 찾을 수 없습니다. id=" + userId));
+    }
 
     @Transactional
     public User findOrCreateByGithub(Long githubId, String email, String username, String profileImageUrl) {
