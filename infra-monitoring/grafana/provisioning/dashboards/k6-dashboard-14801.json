@@ -11,12 +11,6 @@
   ],
   "__requires": [
     {
-      "type": "panel",
-      "id": "blackmirror1-singlestat-math-panel",
-      "name": "Singlestat Math",
-      "version": "1.1.8"
-    },
-    {
       "type": "grafana",
       "id": "grafana",
       "name": "Grafana",
@@ -300,19 +294,27 @@
       "type": "stat"
     },
     {
-      "cacheTimeout": null,
-      "circleBackground": false,
-      "colorBackground": false,
-      "colorValue": true,
       "datasource": "InfluxDB-loadtest",
-      "defaultColor": "rgb(117, 117, 117)",
-      "format": "percent",
-      "gauge": {
-        "maxValue": 100,
-        "minValue": 0,
-        "show": false,
-        "thresholdLabels": false,
-        "thresholdMarkers": true
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "unit": "percent",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 5,
@@ -321,172 +323,35 @@
         "y": 0
       },
       "id": 87,
-      "interval": null,
-      "links": [],
-      "mappingType": 1,
-      "mappingTypes": [
-        {
-          "name": "value to text",
-          "value": 1
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
         },
-        {
-          "name": "range to text",
-          "value": 2
-        }
-      ],
-      "math": "(error/total)*100",
-      "maxDataPoints": 100,
-      "nullPointMode": "connected",
-      "nullText": null,
-      "pluginVersion": "7.5.6",
-      "postfix": "",
-      "postfixFontSize": "50%",
-      "prefix": "",
-      "prefixFontSize": "50%",
-      "rangeMaps": [
-        {
-          "from": "null",
-          "text": "N/A",
-          "to": "null"
-        }
-      ],
-      "sortOrder": "asc",
-      "sortOrderOptions": [
-        {
-          "text": "Ascending",
-          "value": "asc"
-        },
-        {
-          "text": "Descending",
-          "value": "desc"
-        }
-      ],
-      "sparkline": {
-        "fillColor": "rgba(31, 118, 189, 0.18)",
-        "full": false,
-        "lineColor": "rgb(31, 120, 193)",
-        "show": false
+        "text": {},
+        "textMode": "value"
       },
-      "tableColumn": "",
+      "pluginVersion": "8.0.6",
       "targets": [
         {
-          "alias": "error",
-          "groupBy": [
-            {
-              "params": [
-                "$__interval"
-              ],
-              "type": "time"
-            },
-            {
-              "params": [
-                "null"
-              ],
-              "type": "fill"
-            }
-          ],
-          "measurement": "data_sent",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT sum(\"value\") FROM \"http_reqs\" WHERE (\"status\" != '200' AND \"status\" != '201') AND $timeFilter group by time(${interval_value}s)",
-          "rawQuery": true,
           "refId": "A",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "value"
-                ],
-                "type": "field"
-              },
-              {
-                "params": [],
-                "type": "mean"
-              }
-            ]
-          ],
-          "tags": []
-        },
-        {
-          "alias": "total",
-          "groupBy": [
-            {
-              "params": [
-                "$__interval"
-              ],
-              "type": "time"
-            },
-            {
-              "params": [
-                "null"
-              ],
-              "type": "fill"
-            }
-          ],
-          "hide": false,
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT sum(\"value\") FROM \"http_reqs\" WHERE $timeFilter GROUP BY time(${interval_value}s) fill(null)",
           "rawQuery": true,
-          "refId": "B",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "value"
-                ],
-                "type": "field"
-              },
-              {
-                "params": [],
-                "type": "mean"
-              }
-            ]
-          ],
-          "tags": []
-        }
-      ],
-      "thresholds": [
-        {
-          "$$hashKey": "object:162",
-          "color": "#73BF69",
-          "value": 1
-        },
-        {
-          "$$hashKey": "object:219",
-          "color": "#FF9830",
-          "value": 5
-        },
-        {
-          "$$hashKey": "object:222",
-          "color": "#FADE2A",
-          "value": 10
-        },
-        {
-          "$$hashKey": "object:225",
-          "color": "#F2495C",
-          "value": 50
+          "query": "SELECT mean(\"value\") * 100 FROM \"http_req_failed\" WHERE $timeFilter",
+          "resultFormat": "time_series"
         }
       ],
       "timeFrom": null,
       "timeShift": null,
       "title": "Error Rate",
-      "tooltip": {
-        "show": true
-      },
-      "type": "blackmirror1-singlestat-math-panel",
-      "valueFontSize": "80%",
-      "valueMappingColorBackground": "#767171",
-      "valueMaps": [
-        {
-          "op": "=",
-          "text": "No data",
-          "value": "null"
-        }
-      ],
-      "valueName": "total"
+      "type": "stat",
+      "description": "선택한 시간 범위의 전체 요청 중 k6가 실패로 판정한 비율입니다."
     },
     {
       "datasource": "InfluxDB-loadtest",
@@ -759,7 +624,7 @@
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
-            "mean"
+            "lastNotNull"
           ],
           "fields": "",
           "values": false
@@ -770,48 +635,17 @@
       "pluginVersion": "8.0.6",
       "targets": [
         {
-          "groupBy": [
-            {
-              "params": [
-                "$__interval"
-              ],
-              "type": "time"
-            },
-            {
-              "params": [
-                "null"
-              ],
-              "type": "fill"
-            }
-          ],
-          "measurement": "data_sent",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT mean(\"value\") FROM \"http_req_duration\" WHERE $timeFilter GROUP BY time(${interval_value}s) fill(null)",
-          "rawQuery": true,
           "refId": "A",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "value"
-                ],
-                "type": "field"
-              },
-              {
-                "params": [],
-                "type": "mean"
-              }
-            ]
-          ],
-          "tags": []
+          "rawQuery": true,
+          "query": "SELECT mean(\"value\") FROM \"http_req_duration\" WHERE $timeFilter",
+          "resultFormat": "time_series"
         }
       ],
       "timeFrom": null,
       "timeShift": null,
       "title": "Average Response Time",
-      "type": "stat"
+      "type": "stat",
+      "description": "선택한 시간 범위의 모든 요청을 동일 가중치로 평균냅니다."
     },
     {
       "datasource": "InfluxDB-loadtest",
@@ -857,7 +691,7 @@
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
-            "sum"
+            "lastNotNull"
           ],
           "fields": "",
           "values": false
@@ -868,48 +702,17 @@
       "pluginVersion": "8.0.6",
       "targets": [
         {
-          "groupBy": [
-            {
-              "params": [
-                "$__interval"
-              ],
-              "type": "time"
-            },
-            {
-              "params": [
-                "null"
-              ],
-              "type": "fill"
-            }
-          ],
-          "measurement": "data_sent",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT sum(\"value\") FROM \"http_reqs\" WHERE (\"status\" != '200' AND \"status\" != '201') AND $timeFilter group by time(${interval_value}s)",
-          "rawQuery": true,
           "refId": "A",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "value"
-                ],
-                "type": "field"
-              },
-              {
-                "params": [],
-                "type": "mean"
-              }
-            ]
-          ],
-          "tags": []
+          "rawQuery": true,
+          "query": "SELECT sum(\"value\") FROM \"http_req_failed\" WHERE $timeFilter",
+          "resultFormat": "time_series"
         }
       ],
       "timeFrom": null,
       "timeShift": null,
       "title": "HTTP Failures",
-      "type": "stat"
+      "type": "stat",
+      "description": "k6의 http_req_failed 기준 실패 건수입니다. 정상 요청만 있으면 0이며 요청 자체가 없으면 No data입니다."
     },
     {
       "aliasColors": {
@@ -2516,7 +2319,7 @@
     ]
   },
   "time": {
-    "from": "now-5m",
+    "from": "now-30m",
     "to": "now"
   },
   "timepicker": {
