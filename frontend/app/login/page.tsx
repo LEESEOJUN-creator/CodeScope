@@ -29,6 +29,9 @@ export default function LoginPage() {
             Code<span className="brand__dot">Scope</span>
           </h1>
           <p className="page-subtitle">GitHub 트렌드 분석 + AI 레포 추천</p>
+          <p className="muted login-card__note">
+            로그인 없이도 탐색·트렌드·AI 추천을 쓸 수 있습니다. 로그인하면 즐겨찾기와 관심 스택 저장이 열립니다.
+          </p>
 
           {/* useSearchParams는 Suspense 경계 없이 쓰면 페이지 전체가 정적 렌더링에서
               빠지므로, 이 값을 쓰는 부분만 별도 컴포넌트로 분리해 감쌌다(Next.js 권장 패턴). */}

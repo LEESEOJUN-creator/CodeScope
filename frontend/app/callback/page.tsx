@@ -25,7 +25,7 @@ export default function CallbackPage() {
     refreshAccessToken().then((token) => {
       if (token) {
         setAccessToken(token);
-        router.replace('/trending');
+        router.replace('/');
       } else {
         setFailed(true);
         router.replace('/login');

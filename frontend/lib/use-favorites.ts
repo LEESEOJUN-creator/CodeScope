@@ -1,75 +1,61 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from './api-client';
-import type { ApiResponse, Favorite } from './types';
+import { useRouter } from 'next/navigation';
+import { apiFetch, apiRequest } from './api-client';
+import { useAuth } from './auth-context';
+import type { Favorite } from './types';
 
-// 트렌드/상세 화면의 ★ 토글 버튼이 공유하는 "지금 로그인한 사용자가 즐겨찾기한
-// repoId 집합" 상태. 목록 전체를 다시 그릴 필요 없이 멤버십(id 존재 여부)만
-// 알면 되므로 FavoriteResponse 전체가 아니라 Set<number>로 축약해서 들고 있는다.
+// 즐겨찾기 여부 조회 + 낙관적 토글. 비로그인 사용자가 별을 누르면 로그인 화면으로 보낸다.
 export function useFavorites() {
+  const router = useRouter();
+  const { isAuthenticated } = useAuth();
   const [favoritedIds, setFavoritedIds] = useState<Set<number>>(new Set());
-  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      const res = await apiFetch('/api/users/me/bookmarks');
-      if (cancelled) return;
-      if (res.ok) {
-        const body: ApiResponse<Favorite[]> = await res.json();
-        setFavoritedIds(new Set((body.data ?? []).map((f) => f.repoId)));
-      }
-      setLoaded(true);
+    if (!isAuthenticated) {
+      queueMicrotask(() => setFavoritedIds(new Set()));
+      return;
     }
-
-    load();
-
+    let cancelled = false;
+    apiRequest<Favorite[]>('/api/users/me/bookmarks').then((res) => {
+      if (!cancelled && res.ok) {
+        setFavoritedIds(new Set((res.data ?? []).map((f) => f.repoId)));
+      }
+    });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isAuthenticated]);
 
-  // 낙관적 업데이트(Optimistic UI) — 클릭 즉시 별 표시를 바꾸고, 서버 응답이
-  // 실패하면 그때 되돌린다. UNIQUE 제약/존재하지 않는 즐겨찾기 삭제 등으로
-  // 400/404가 나는 경우도 이 롤백 경로로 자연스럽게 처리된다.
   const toggle = useCallback(
     async (repoId: number) => {
+      if (!isAuthenticated) {
+        router.push('/login');
+        return;
+      }
       const wasFavorited = favoritedIds.has(repoId);
-
-      setFavoritedIds((prev) => {
+      const flip = (prev: Set<number>, add: boolean) => {
         const next = new Set(prev);
-        if (wasFavorited) {
-          next.delete(repoId);
-        } else {
-          next.add(repoId);
-        }
+        if (add) next.add(repoId);
+        else next.delete(repoId);
         return next;
-      });
+      };
 
+      // 응답을 기다리지 않고 먼저 반영(낙관적 업데이트), 실패하면 되돌린다
+      setFavoritedIds((prev) => flip(prev, !wasFavorited));
       const res = await apiFetch(`/api/users/me/bookmarks/${repoId}`, {
         method: wasFavorited ? 'DELETE' : 'POST',
-      });
-
-      if (!res.ok) {
-        setFavoritedIds((prev) => {
-          const next = new Set(prev);
-          if (wasFavorited) {
-            next.add(repoId);
-          } else {
-            next.delete(repoId);
-          }
-          return next;
-        });
+      }).catch(() => null);
+      if (!res || !res.ok) {
+        setFavoritedIds((prev) => flip(prev, wasFavorited));
       }
     },
-    [favoritedIds]
+    [favoritedIds, isAuthenticated, router]
   );
 
   return {
     isFavorited: (repoId: number) => favoritedIds.has(repoId),
     toggle,
-    loaded,
   };
 }

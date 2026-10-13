@@ -1,128 +1,167 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { apiFetch } from '@/lib/api-client';
-import { useElapsedSeconds } from '@/lib/use-elapsed-seconds';
-import type { ApiResponse, RepoRecommend } from '@/lib/types';
+import { useSearchParams } from 'next/navigation';
+import { AiPanel } from '@/components/ai-panel';
+import { RepoCard } from '@/components/repo-card';
+import { StackInput } from '@/components/stack-input';
+import { apiRequest } from '@/lib/api-client';
+import { useAuth } from '@/lib/auth-context';
+import { parseStack } from '@/lib/format';
+import { useApiData } from '@/lib/use-api-data';
+import { useFavorites } from '@/lib/use-favorites';
+import type { RepoRecommend, Skill } from '@/lib/types';
 
-// 백엔드 우선순위(RepoRecommendService.resolveStack): stack 파라미터가 있으면
-// 그걸 그대로 쓰고, 없으면 로그인 사용자의 저장된 관심 스택(UserSkill)을 쓴다.
-// 지금은 관심 스택을 등록하는 화면이 없어(UserSkillController 미구현) 로그인만
-// 해서는 항상 400이 난다 — 그래서 직접 입력창을 둬서 즉시 확인 가능하게 했다.
 export default function RecommendPage() {
-  const router = useRouter();
-  const [stackInput, setStackInput] = useState('');
-  const [data, setData] = useState<RepoRecommend | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const fetchRecommend = useCallback(
-    async (stack?: string) => {
-      setLoading(true);
-      setError(null);
-
-      const path = stack ? `/api/recommend?stack=${encodeURIComponent(stack)}` : '/api/recommend';
-      const res = await apiFetch(path);
-
-      if (res.status === 401) {
-        router.replace('/login');
-        return;
-      }
-
-      const body: ApiResponse<RepoRecommend> | null = await res.json().catch(() => null);
-
-      if (!res.ok) {
-        setError(body?.message ?? `요청에 실패했습니다 (HTTP ${res.status})`);
-        setData(null);
-        setLoading(false);
-        return;
-      }
-
-      setData(body?.data ?? null);
-      setLoading(false);
-    },
-    [router]
+  return (
+    <Suspense fallback={<main><div className="state-box">불러오는 중...</div></main>}>
+      <Recommend />
+    </Suspense>
   );
+}
 
+function Recommend() {
+  const params = useSearchParams();
+  const { isAuthenticated, ready } = useAuth();
+  const { isFavorited, toggle } = useFavorites();
+  const { data: mySkills } = useApiData<Skill[]>(isAuthenticated ? '/api/users/me/skills' : null);
+
+  const [stack, setStack] = useState<string[]>(() => parseStack(params.get('stack') ?? ''));
+  const [result, setResult] = useState<RepoRecommend | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [retryAfter, setRetryAfter] = useState<number | null>(null);
+  const [lastQuery, setLastQuery] = useState<string[] | null>(null);
+
+  // useMySkills=true면 stack 파라미터 없이 호출 → 서버가 저장된 관심 스택을 사용
+  // (RepoRecommendService.resolveStack). 직접 입력이 있으면 그게 우선이다.
+  const recommend = useCallback(async (query: string[], useMySkills = false) => {
+    setLastQuery(query);
+    setLoading(true);
+    setError(null);
+    setRetryAfter(null);
+    const path = useMySkills ? '/api/recommend' : `/api/recommend?stack=${encodeURIComponent(query.join(', '))}`;
+    const res = await apiRequest<RepoRecommend>(path);
+    setLoading(false);
+    if (res.ok) {
+      setResult(res.data);
+    } else if (res.status === 503) {
+      setRetryAfter(res.retryAfter ?? 5);
+    } else {
+      setError(res.message);
+    }
+  }, []);
+
+  // 홈의 "스택으로 바로 추천받기"처럼 ?stack= 으로 들어오면 바로 한 번 요청한다
+  const autoRan = useRef(false);
   useEffect(() => {
-    // fetchRecommend() 내부가 setState로 시작하는 비동기 함수라, effect 본문에서
-    // 곧바로 호출하면 react-hooks/set-state-in-effect 규칙에 걸린다
-    // (lib/use-api-data.ts와 동일한 이유). queueMicrotask로 한 틱 늦춰
-    // "effect가 즉시 setState하는 패턴"이 아니게 만든다 — 동작은 동일(다음
-    // 마이크로태스크에서 바로 실행)하고 사용자 입장에서 체감 차이도 없다.
-    queueMicrotask(() => {
-      fetchRecommend();
-    });
-  }, [fetchRecommend]);
+    if (autoRan.current || stack.length === 0 || !params.get('stack')) return;
+    autoRan.current = true;
+    queueMicrotask(() => recommend(stack));
+  }, [params, recommend, stack]);
 
-  const elapsed = useElapsedSeconds(loading);
+  const skillNames = (mySkills ?? []).map((s) => s.topicName);
 
   return (
     <main>
-      <Link href="/trending" className="back-link">
-        ← 트렌드로
-      </Link>
-
       <div className="page-header">
         <h1>AI 추천</h1>
         <p className="page-subtitle">
-          pgvector 유사도 검색 + LLM 추천. 로그인 사용자는 저장된 관심 스택을 자동으로
-          쓰지만(관심 스택 등록 화면은 아직 없음), 아래에 직접 입력해서 바로 시도할 수도 있습니다.
+          기술 스택을 입력하면 임베딩 유사도(pgvector)로 후보 레포 10개를 찾고, Claude가 그 목록
+          안에서만 골라 추천 이유를 설명합니다.
         </p>
       </div>
 
       <form
-        className="stack-form"
+        className="recommend-form"
         onSubmit={(e) => {
           e.preventDefault();
-          fetchRecommend(stackInput.trim() || undefined);
+          if (stack.length > 0) recommend(stack);
         }}
       >
-        <input
-          className="text-input"
-          value={stackInput}
-          onChange={(e) => setStackInput(e.target.value)}
-          placeholder="예: Java,Spring Boot,Kafka"
+        <StackInput
+          values={stack}
+          onAdd={(v) => setStack((prev) => parseStack([...prev, v].join(',')))}
+          onRemove={(v) => setStack((prev) => prev.filter((s) => s !== v))}
+          placeholder="예: Java, Spring Boot, Kafka (Enter로 추가)"
+          disabled={loading}
         />
-        <button type="submit" className="button" disabled={loading}>
+        <button type="submit" className="button" disabled={loading || stack.length === 0}>
           추천 받기
         </button>
       </form>
 
-      {loading && (
-        <div className="state-box">
-          추천 생성 중... {elapsed}초 경과 (LLM 생성이라 1~3분 정도 걸립니다, 멈춘 게 아닙니다)
+      {ready && (
+        <div className="my-stack-hint">
+          {isAuthenticated ? (
+            skillNames.length > 0 ? (
+              <>
+                <span className="muted">내 관심 스택:</span>
+                {skillNames.map((name) => (
+                  <span key={name} className="chip chip--static">{name}</span>
+                ))}
+                <button
+                  type="button"
+                  className="button button--ghost button--sm"
+                  disabled={loading}
+                  onClick={() => {
+                    setStack(skillNames);
+                    recommend(skillNames, true);
+                  }}
+                >
+                  내 스택으로 추천
+                </button>
+                <Link href="/me" className="link-more">편집</Link>
+              </>
+            ) : (
+              <span className="muted">
+                <Link href="/me" className="link-more">내 스택</Link>에 관심 기술을 저장해 두면 한 번에 추천받을 수 있어요.
+              </span>
+            )
+          ) : (
+            <span className="muted">
+              <Link href="/login" className="link-more">로그인</Link>하면 관심 스택을 저장해 두고 바로 추천받을 수 있어요.
+            </span>
+          )}
         </div>
       )}
-      {error && <p className="alert-error">{error}</p>}
 
-      {data && (
-        <>
-          <p className="muted" style={{ marginBottom: 12 }}>
-            기준 스택 · {data.stack}
-          </p>
-          <div className="card">
-            <p className="prose">{data.recommendation}</p>
-          </div>
-
-          <h2 className="section-title">후보 레포</h2>
-          <div className="card-grid">
-            {data.candidates.map((candidate) => (
-              <div className="card" key={candidate.id}>
-                <div className="card__title">{candidate.fullName}</div>
-                <p className="card__desc">{candidate.description}</p>
-                <div className="card__meta">
-                  <span>
-                    <strong>★ {candidate.starCount.toLocaleString()}</strong>
-                  </span>
-                  <span>{candidate.language ?? '언어 미상'}</span>
+      {lastQuery && (
+        <section className="ai-section">
+          <AiPanel
+            loading={loading}
+            retryAfter={retryAfter}
+            error={error}
+            onRetry={() => recommend(lastQuery)}
+            loadingLabel="후보를 찾고 AI가 추천 이유를 쓰고 있어요"
+          >
+            {result && (
+              <>
+                <div className="card ai-result">
+                  <p className="ai-result__label">✦ {result.stack} 기준 추천</p>
+                  <p className="prose">{result.recommendation}</p>
                 </div>
-              </div>
-            ))}
-          </div>
-        </>
+
+                <div className="section-head">
+                  <h2 className="section-title">유사도 상위 후보 {result.candidates.length}개</h2>
+                  <span className="muted">임베딩 거리 순</span>
+                </div>
+                <div className="card-grid">
+                  {result.candidates.map((c, i) => (
+                    <RepoCard
+                      key={c.id}
+                      {...c}
+                      rank={i + 1}
+                      favorited={isFavorited(c.id)}
+                      onToggleFavorite={() => toggle(c.id)}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </AiPanel>
+        </section>
       )}
     </main>
   );

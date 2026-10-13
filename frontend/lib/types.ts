@@ -21,6 +21,17 @@ export type GithubRepository = {
   updatedAt: string;
 };
 
+// Spring Data Page 직렬화 형태(GET /api/repos/search) 중 화면에서 쓰는 필드만
+export type Page<T> = {
+  content: T[];
+  totalElements: number;
+  totalPages: number;
+  number: number;
+  size: number;
+  first: boolean;
+  last: boolean;
+};
+
 // TrendAnalysisResponse
 export type TrendAnalysis = {
   repoId: number;
@@ -53,4 +64,18 @@ export type Favorite = {
   starCount: number;
   githubUrl: string;
   favoritedAt: string;
+};
+
+// UserResponse (GET /api/users/me)
+export type UserProfile = {
+  userId: number;
+  username: string;
+  email: string | null;
+  profileImageUrl: string | null;
+};
+
+// SkillResponse (GET/POST /api/users/me/skills)
+export type Skill = {
+  topicId: number;
+  topicName: string;
 };

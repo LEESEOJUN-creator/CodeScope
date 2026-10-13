@@ -1,53 +1,41 @@
 'use client';
 
-import Link from 'next/link';
+import { RepoCard, RepoCardSkeleton } from '@/components/repo-card';
 import { useApiData } from '@/lib/use-api-data';
 import { useFavorites } from '@/lib/use-favorites';
-import { StarButton } from '@/components/star-button';
 import type { GithubRepository } from '@/lib/types';
 
 export default function TrendingPage() {
-  const { data: repos, error, loading } = useApiData<GithubRepository[]>(
-    '/api/repos/trending?limit=12'
-  );
+  const { data: repos, error, loading } = useApiData<GithubRepository[]>('/api/repos/trending?limit=30');
   const { isFavorited, toggle } = useFavorites();
 
   return (
     <main>
       <div className="page-header">
-        <h1>트렌드 레포</h1>
-        <p className="page-subtitle">지금 GitHub에서 뜨고 있는 오픈소스 프로젝트</p>
+        <h1>트렌드 랭킹</h1>
+        <p className="page-subtitle">
+          GitHub에서 수집한 트렌딩 레포를 스타 수 기준으로 정렬했습니다(Redis Sorted Set). 레포를 열면
+          &ldquo;왜 뜨는가&rdquo;를 AI가 분석합니다.
+        </p>
       </div>
 
-      {loading && <div className="state-box">불러오는 중...</div>}
       {error && <p className="alert-error">{error}</p>}
       {repos && repos.length === 0 && (
-        <div className="state-box">표시할 트렌드 레포가 없습니다.</div>
+        <div className="state-box">아직 랭킹이 비어 있습니다. 수집 스케줄러가 한 번 돌면 채워집니다.</div>
       )}
 
-      {repos && repos.length > 0 && (
-        <div className="card-grid">
-          {repos.map((repo) => (
-            <div className="card" key={repo.id}>
-              <div className="card__row">
-                <Link href={`/repos/${repo.id}`} style={{ flex: 1, minWidth: 0 }}>
-                  <div className="card__title">{repo.fullName}</div>
-                </Link>
-                <StarButton favorited={isFavorited(repo.id)} onToggle={() => toggle(repo.id)} />
-              </div>
-              <Link href={`/repos/${repo.id}`}>
-                <p className="card__desc">{repo.description}</p>
-              </Link>
-              <div className="card__meta">
-                <span>
-                  <strong>★ {repo.starCount.toLocaleString()}</strong>
-                </span>
-                <span>{repo.language ?? '언어 미상'}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <div className="card-grid">
+        {loading && <RepoCardSkeleton count={9} />}
+        {repos?.map((repo, i) => (
+          <RepoCard
+            key={repo.id}
+            {...repo}
+            rank={i + 1}
+            favorited={isFavorited(repo.id)}
+            onToggleFavorite={() => toggle(repo.id)}
+          />
+        ))}
+      </div>
     </main>
   );
 }

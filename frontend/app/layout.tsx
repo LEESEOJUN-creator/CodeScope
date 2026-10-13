@@ -17,7 +17,7 @@ const pretendard = localFont({
 
 export const metadata: Metadata = {
   title: 'CodeScope',
-  description: 'GitHub 트렌드 분석 + AI 레포 추천 (Day 30~31 최소 시연)',
+  description: 'GitHub 트렌딩 레포를 수집·임베딩하고, 기술 스택에 맞는 레포를 AI가 추천합니다.',
 };
 
 // RootLayout 자체는 Server Component로 유지하고, Access Token을 들고 있어야
