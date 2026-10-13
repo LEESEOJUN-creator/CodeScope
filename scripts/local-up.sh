@@ -187,6 +187,12 @@ if $DEPLOY_APP; then
   kubectl rollout restart deploy/codescope >/dev/null
   kubectl rollout status deploy/codescope --timeout=300s
   kubectl rollout status deploy/codescope-frontend --timeout=180s
+
+  # port-forward는 svc가 아니라 시작 시점의 Pod 하나에 붙는다. 재배포로 Pod가
+  # 교체되면 기존 port-forward는 종료 중인 옛 Pod를 가리키다 끊기므로 다시 연다
+  pkill -f 'kubectl port-forward svc/codescope ' || true
+  pkill -f 'kubectl port-forward svc/codescope-frontend ' || true
+  sleep 1
 fi
 
 # ── 7) 클러스터 앱 port-forward ─────────────────────────────────────
