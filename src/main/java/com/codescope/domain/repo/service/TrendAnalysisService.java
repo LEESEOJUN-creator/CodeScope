@@ -3,15 +3,14 @@ package com.codescope.domain.repo.service;
 import com.codescope.client.llm.LlmClient;
 import com.codescope.domain.repo.dto.TrendAnalysisResponse;
 import com.codescope.domain.repo.entity.GithubRepository;
-import com.codescope.domain.repo.entity.TrendScore;
 import com.codescope.domain.repo.repository.GithubRepositoryJpaRepository;
 import com.codescope.domain.repo.repository.TrendScoreJpaRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
 /**
@@ -26,9 +25,14 @@ import java.time.format.DateTimeFormatter;
  * 만료 시 사라지는 휘발성 저장소다. 분석 결과를 나중에(캐시 만료 후에도)
  * 다시 조회하거나 다른 기능(예: 트렌드 랭킹 상세 화면)에서 재사용하려면
  * DB에도 남겨야 한다. 캐시=빠른 응답, DB=영구 기록으로 역할이 다르다.
+ *
+ * 왜 클래스에 @Transactional이 없는가: RepoRecommendService와 같은 이유 —
+ * 트랜잭션이 LLM 응답 대기(수 초)를 감싸면 그동안 DB 커넥션을 점유해 풀이
+ * 고갈된다. "조회(짧은 트랜잭션) → LLM 호출(트랜잭션 밖) → 저장(upsert 한
+ * 문장)"으로 나눠, 커넥션은 실제 쿼리 순간에만 빌려 쓴다. buildPrompt는
+ * GithubRepository의 기본 컬럼만 읽어 트랜잭션 밖에서도 지연 로딩이 없다.
  */
 @Service
-@Transactional
 @RequiredArgsConstructor
 public class TrendAnalysisService {
 
@@ -43,7 +47,12 @@ public class TrendAnalysisService {
     // 단순한 구조를 유지한다. TTL(1시간)이 지나야 캐시가 비므로, 그 시점에
     // 최신 star/fork 수 기준으로 분석을 다시 생성하는 것이 "왜 지금 뜨는가"라는
     // 질문의 취지에도 더 맞는다.
-    @Cacheable(value = "trendAnalysis", key = "#repoId")
+    //
+    // 왜 sync = true인가: 캐시 미스가 같은 레포에 동시에 몰리면(만료 직후, 첫
+    // 조회 등) 요청 수만큼 LLM이 중복 호출된다 — 응답은 같은데 비용과
+    // 세마포어 대기만 늘어난다. sync는 같은 키의 미스를 이 JVM 안에서 한
+    // 스레드만 계산하게 하고 나머지는 그 결과를 기다려 받는다.
+    @Cacheable(value = "trendAnalysis", key = "#repoId", sync = true)
     public TrendAnalysisResponse analyze(Long repoId) {
         GithubRepository repository = githubRepositoryJpaRepository.findById(repoId)
                 .orElseThrow(() -> new EntityNotFoundException("레포지토리를 찾을 수 없습니다: id=" + repoId));
@@ -57,11 +66,7 @@ public class TrendAnalysisService {
     }
 
     private void persist(GithubRepository repository, String analysisText) {
-        TrendScore trendScore = trendScoreJpaRepository.findByRepositoryId(repository.getId())
-                .orElseGet(() -> TrendScore.of(repository, 0.0));
-
-        trendScore.updateAnalysisText(analysisText);
-        trendScoreJpaRepository.save(trendScore);
+        trendScoreJpaRepository.upsertAnalysisText(repository.getId(), analysisText, LocalDateTime.now());
     }
 
     // 현재 스키마에서 확보 가능한 지표만 사용: 스타/포크/오픈이슈 수,

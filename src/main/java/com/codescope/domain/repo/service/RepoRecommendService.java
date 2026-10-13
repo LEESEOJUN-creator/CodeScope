@@ -2,9 +2,9 @@ package com.codescope.domain.repo.service;
 
 import com.codescope.client.llm.EmbeddingService;
 import com.codescope.client.llm.LlmClient;
+import com.codescope.domain.repo.dto.RecommendCandidateView;
 import com.codescope.domain.repo.dto.RecommendedRepoDto;
 import com.codescope.domain.repo.dto.RepoRecommendResponse;
-import com.codescope.domain.repo.entity.RepoEmbedding;
 import com.codescope.domain.repo.repository.RepoEmbeddingJpaRepository;
 import com.codescope.domain.user.dto.SkillResponse;
 import com.codescope.domain.user.service.UserSkillService;
@@ -12,7 +12,6 @@ import com.pgvector.PGvector;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -30,10 +29,18 @@ import java.util.stream.Collectors;
  * 이라는 제약을 명시하면, LLM이 그 목록을 벗어난 답을 내놓을 가능성을
  * 구조적으로 줄인다(완전히 막는다고 보장할 수는 없어 실제 검증이
  * 필요 — RepoRecommendServiceIntegrationTest 참고).
+ *
+ * 왜 클래스에 @Transactional이 없는가(컨벤션의 "조회 메서드 readOnly 기본
+ * 적용"에서 의도적으로 벗어남): 이 서비스의 대부분 시간은 DB가 아니라 LLM
+ * 응답 대기다. 클래스 전체를 트랜잭션으로 감싸면 그 수 초 동안 DB 커넥션을
+ * 쥐고 있어, 추천 요청 몇 건만 몰려도 HikariCP 풀(10)이 고갈되고 LLM과
+ * 무관한 조회 API까지 connectionTimeout(30초)으로 실패했다(부하테스트
+ * 기준선: active 10 / pending 211). DB 접근은 pgvector 검색 쿼리 하나뿐이고
+ * 그 자체가 리포지토리의 읽기 전용 트랜잭션에서 끝나므로, LLM 호출은
+ * 트랜잭션 밖에서 일어난다(LlmCallTransactionBoundaryTest가 회귀 검증).
  */
 @Slf4j
 @Service
-@Transactional(readOnly = true)
 @RequiredArgsConstructor
 public class RepoRecommendService {
 
@@ -88,14 +95,14 @@ public class RepoRecommendService {
         // System.currentTimeMillis()와 달리 시스템 시각 조정(NTP 등)의 영향을
         // 받지 않는 단조 증가 시계라 경과시간 측정에 더 정확하기 때문.
         long pgvectorSearchStartNanos = System.nanoTime();
-        List<RepoEmbedding> nearest = repoEmbeddingJpaRepository
-                .findNearestEmbeddedByEmbedding(queryVectorLiteral, CANDIDATE_LIMIT);
+        List<RecommendCandidateView> nearest = repoEmbeddingJpaRepository
+                .findNearestEmbeddedCandidates(queryVectorLiteral, CANDIDATE_LIMIT);
         long pgvectorSearchElapsedMs = (System.nanoTime() - pgvectorSearchStartNanos) / 1_000_000;
         log.info("pgvector 유사도 검색 소요시간: {}ms (candidateLimit={})",
                 pgvectorSearchElapsedMs, CANDIDATE_LIMIT);
 
         List<RecommendedRepoDto> candidates = nearest.stream()
-                .map(re -> RecommendedRepoDto.from(re.getRepository()))
+                .map(RecommendedRepoDto::from)
                 .toList();
 
         if (candidates.isEmpty()) {

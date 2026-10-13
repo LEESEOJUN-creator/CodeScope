@@ -66,6 +66,14 @@ spring:
     driver-class-name: org.postgresql.Driver
 
   jpa:
+    # 왜 끄는가(기본값 true): OSIV는 요청이 끝날 때까지 영속성 컨텍스트를 열어
+    #   두고, 한 번 빌린 DB 커넥션도 응답이 나갈 때까지 쥐고 있는다. 추천/트렌드
+    #   분석처럼 쿼리 뒤에 LLM 응답을 수 초씩 기다리는 요청은 그 시간 내내
+    #   커넥션을 점유해, 부하테스트 기준선에서 풀(10) 고갈 → 일반 조회까지
+    #   connectionTimeout(30초) 실패로 번졌다. 끄면 커넥션은 트랜잭션이 끝나는
+    #   즉시 반환된다. 대신 지연 로딩은 서비스 트랜잭션 안에서만 가능하므로,
+    #   엔티티 → DTO 변환은 반드시 서비스 계층에서 끝낸다(현재 모든 서비스가 그렇게 돼 있음).
+    open-in-view: false
     hibernate:
       # validate: 스키마는 Flyway(V1__init.sql)가 관리하고, Hibernate는
       #   엔티티 매핑과 실제 테이블 구조가 일치하는지만 검증

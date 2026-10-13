@@ -1,5 +1,6 @@
 package com.codescope.domain.repo.repository;
 
+import com.codescope.domain.repo.dto.RecommendCandidateView;
 import com.codescope.domain.repo.entity.RepoEmbedding;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -33,12 +34,22 @@ public interface RepoEmbeddingJpaRepository extends JpaRepository<RepoEmbedding,
     //   재시도 실패로 FAILED가 된 레포도 repo_embeddings엔 옛 벡터가 남아있어
     //   필터링 없이 쓰면 추천에 섞여 들어갈 수 있음을 실측으로 확인) — pgvector
     //   검증용과 실제 추천 비즈니스 로직용의 관심사가 다르므로 분리했다.
+    //
+    // 왜 엔티티가 아니라 RecommendCandidateView(프로젝션)를 반환하는가:
+    //   N+1 제거와 트랜잭션 범위 축소 — RecommendCandidateView 주석 참고.
+    // 왜 별칭에 큰따옴표를 쓰는가: PostgreSQL은 따옴표 없는 별칭을 소문자로
+    //   접어(fullName → fullname) 프로젝션 getter(getFullName)와 매칭되지 않는다.
     @Query(value = """
-            SELECT re.* FROM repo_embeddings re
+            SELECT gr.github_repository_id AS "id",
+                   gr.full_name            AS "fullName",
+                   gr.description          AS "description",
+                   gr.language             AS "language",
+                   gr.star_count           AS "starCount"
+            FROM repo_embeddings re
             JOIN github_repository gr ON gr.github_repository_id = re.repo_id
             WHERE gr.process_status = 'EMBEDDED'
             ORDER BY re.embedding <=> CAST(:queryVector AS vector)
             LIMIT :limit
             """, nativeQuery = true)
-    List<RepoEmbedding> findNearestEmbeddedByEmbedding(@Param("queryVector") String queryVector, @Param("limit") int limit);
+    List<RecommendCandidateView> findNearestEmbeddedCandidates(@Param("queryVector") String queryVector, @Param("limit") int limit);
 }
