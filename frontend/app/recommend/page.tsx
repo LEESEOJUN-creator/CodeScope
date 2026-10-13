@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { AiPanel } from '@/components/ai-panel';
+import { RichText } from '@/components/rich-text';
 import { RepoCard } from '@/components/repo-card';
 import { StackInput } from '@/components/stack-input';
 import { apiRequest } from '@/lib/api-client';
@@ -140,7 +141,7 @@ function Recommend() {
               <>
                 <div className="card ai-result">
                   <p className="ai-result__label">✦ {result.stack} 기준 추천</p>
-                  <p className="prose">{result.recommendation}</p>
+                  <RichText text={result.recommendation} />
                 </div>
 
                 <div className="section-head">

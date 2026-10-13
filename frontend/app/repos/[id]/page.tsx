@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { AiPanel } from '@/components/ai-panel';
+import { RichText } from '@/components/rich-text';
 import { LanguageBadge } from '@/components/repo-card';
 import { StarButton } from '@/components/star-button';
 import { apiRequest } from '@/lib/api-client';
@@ -135,7 +136,7 @@ function TrendAnalysisSection({ repoId }: { repoId: number }) {
         >
           {analysis && (
             <div className="card ai-result">
-              <p className="prose">{analysis.analysis}</p>
+              <RichText text={analysis.analysis} />
             </div>
           )}
         </AiPanel>
