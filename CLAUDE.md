@@ -169,21 +169,26 @@ User - UserSkill - Topic               : User(1)-UserSkill(N)-Topic(1)
 [레포]
 GET    /api/repos                            ← 전체 조회
 GET    /api/repos/{id}                       ← 단건 조회
-POST   /api/repos                            ← 생성
-PUT    /api/repos/{id}                        ← 수정
-DELETE /api/repos/{id}                       ← 삭제
-GET    /api/repos/trending?period=WEEKLY&limit=20
-[분석/추천]
-GET    /api/trends/analysis?topic=kafka
-GET    /api/recommend?skills=Spring Boot,Redis,Kafka  (비로그인)
+GET    /api/repos/search?keyword=&language=&topic=&minStars=&page=&size=  ← 동적 검색(keyword는 이름·설명)
+GET    /api/repos/language/{language}
+POST   /api/repos                            ← 생성(인증)
+DELETE /api/repos/{id}                       ← 삭제(인증)
+GET    /api/repos/trending?limit=20          ← Redis Sorted Set 랭킹(수집 시 스타 수 ZADD)
+[분석/추천]  (LLM 과부하 시 503 + Retry-After)
+GET    /api/trends/analysis?repoId=1
+GET    /api/recommend?stack=Spring Boot,Redis,Kafka  (비로그인)
 GET    /api/recommend                        (로그인 시 저장된 스택 자동 사용)
-GET    /api/issues/recommend?skills=Java,Spring Boot
-GET    /api/ecosystem?tech=kafka
+GET    /api/issues/recommend?skills=Java,Spring Boot  ← 미구현(이슈 수집 없음)
+GET    /api/ecosystem?tech=kafka                      ← 미구현
 [사용자]
 GET    /oauth2/authorization/github          ← GitHub 로그인 시작
+POST   /api/auth/refresh | /api/auth/logout
 GET    /api/users/me                         ← 내 정보 조회
-POST   /api/users/me/bookmarks/{repoId}      ← 레포 즐겨찾기 (UserFavorite)
 GET    /api/users/me/bookmarks               ← 즐겨찾기 목록
+POST   /api/users/me/bookmarks/{repoId}      ← 즐겨찾기 추가 / DELETE로 해제
+GET    /api/users/me/skills                  ← 관심 스택 목록
+POST   /api/users/me/skills  {"name": "..."} ← 관심 스택 추가(토픽 대소문자 무시 재사용)
+DELETE /api/users/me/skills/{topicId}
 
 ## Claude Code 사용 원칙
 1. 내가 먼저 설계한다 → AI에게 구현 요청
