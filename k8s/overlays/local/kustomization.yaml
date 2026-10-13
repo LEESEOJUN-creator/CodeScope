@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# macOS(Apple Silicon) 로컬 배포용 overlay. kind overlay를 그대로 상속하고
+# 앱 이미지만 로컬 빌드본으로 바꾼다.
+#
+# 왜 kind overlay를 직접 고치지 않는가: kind overlay의 newTag는 CI가 GHCR
+#   SHA 태그로 갱신하고 ArgoCD가 그 값을 배포한다(GitOps 경로). 로컬 이미지
+#   태그를 거기에 섞으면 그 흐름이 깨진다.
+# 왜 로컬 빌드 이미지인가: GHCR 이미지는 linux/amd64 전용이라 arm64 kind
+#   노드에서 "no match for platform in manifest"로 pull이 실패한다.
+#
+# 사용: scripts/local-up.sh --app (이미지 빌드 → kind load → 이 overlay 적용)
+resources:
+  - ../kind
+  - frontend.yaml
+
+patches:
+  - path: patch-codescope.yaml
+
+images:
+  - name: ghcr.io/leeseojun-creator/codescope
+    newName: codescope-local
+    # local-up.sh --app이 `kustomize edit` 없이 kubectl set image로 실제 태그를
+    # 덮어쓴다(커밋 SHA마다 이 파일을 고치지 않기 위해). 여기 값은 자리표시자
+    newTag: dev

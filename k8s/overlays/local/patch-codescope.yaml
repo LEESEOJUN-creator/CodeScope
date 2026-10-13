@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codescope
+spec:
+  template:
+    spec:
+      containers:
+        - name: codescope
+          # kind load로 노드에 직접 넣은 이미지라 레지스트리에서 받으면 안 된다
+          imagePullPolicy: Never
+          # .env 전체를 codescope-secrets로 만들어 통째로 주입한다(local-up.sh가
+          # kubectl create secret --from-env-file로 생성). base의 개별 secretKeyRef
+          # 4개 외에 ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL / CLAUDE_MODEL 등
+          # .env에 새 키가 생겨도 매니페스트 수정 없이 반영된다
+          envFrom:
+            - secretRef:
+                name: codescope-secrets
+          env:
+            # Ollama는 Pod가 아니라 Mac 호스트에서 돈다. Docker Desktop은
+            # 컨테이너(kind 노드 포함)에서 호스트로 가는 이름을 제공한다
+            # (relaxed binding: LLM_OLLAMA_BASEURL -> llm.ollama.base-url)
+            - name: LLM_OLLAMA_BASEURL
+              value: http://host.docker.internal:11434

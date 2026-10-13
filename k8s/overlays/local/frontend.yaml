@@ -1,0 +1,51 @@
+# 프론트엔드(Next.js)는 로컬 overlay에만 둔다 — CI가 프론트 이미지를 빌드/푸시하지
+# 않아 base(=GitOps 배포 대상)에 넣으면 ArgoCD가 없는 이미지를 배포하게 된다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codescope-frontend
+  labels:
+    app: codescope-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: codescope-frontend
+  template:
+    metadata:
+      labels:
+        app: codescope-frontend
+    spec:
+      containers:
+        - name: frontend
+          # 실제 태그는 local-up.sh --app이 kubectl set image로 덮어쓴다
+          image: codescope-frontend-local:dev
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 3000
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 100m
+            limits:
+              memory: 384Mi
+              cpu: 500m
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: codescope-frontend
+  labels:
+    app: codescope-frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: codescope-frontend
+  ports:
+    - port: 3000
+      targetPort: 3000

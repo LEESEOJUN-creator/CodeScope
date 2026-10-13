@@ -150,7 +150,21 @@ cp .env.example .env                  # GitHub OAuth·토큰, JWT_SECRET, ANTHRO
 ```bash
 ./scripts/local-up.sh      # macOS·Linux  (Windows: ./scripts/local-up.ps1)
 ./scripts/local-down.sh    # 종료         (Windows: ./scripts/local-down.ps1)
+
+./scripts/local-up.sh --monitoring   # + Grafana(:3001) / Prometheus(:9090) / InfluxDB(:8086)
+./scripts/local-down.sh --delete-cluster   # 클러스터까지 삭제(데이터 소멸)
 ```
+
+**앱/프론트엔드까지 클러스터에 배포** (bootRun·npm run dev 없이, macOS):
+
+```bash
+./scripts/local-up.sh --app   # 이미지 로컬 빌드 → kind load → .env로 Secret 생성 → k8s/overlays/local 적용
+                              # 화면 http://localhost:3000 / API http://localhost:8080 (port-forward)
+```
+
+- GHCR 이미지는 amd64 전용이라 Apple Silicon에서는 로컬 빌드 이미지(`k8s/overlays/local`)를 쓴다.
+- 재부팅 후에는 옵션 없이 `./scripts/local-up.sh`만 실행하면 배포된 앱의 port-forward가 복구된다. 코드나 `.env`를 바꿨을 때만 `--app`.
+- 클러스터 앱과 `bootRun`을 동시에 띄우지 않는다(같은 Kafka 컨슈머 그룹을 나눠 가짐). 부하테스트 전에는 `local-down.sh`로 앱 Pod를 내린다.
 
 ### 2. 백엔드 / 프론트엔드
 
