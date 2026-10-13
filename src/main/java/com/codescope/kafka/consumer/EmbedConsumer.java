@@ -48,8 +48,9 @@ public class EmbedConsumer {
     // 왜 @RetryableTopic을 여전히 두는가: 이제 이 리스너 메서드 자체는
     // "작업을 큐에 제출"만 하고 정상 반환하므로, 임베딩 처리 실패는 더 이상
     // 여기로 전파되지 않는다(아래 processWithRetry가 전담). 이 애노테이션이
-    // 실제로 담당하는 것은 딱 하나 — embedWorkerExecutor의 큐가 가득 차서
-    // RejectedExecutionException이 던져지는 경우(백프레셔)뿐이다. 그 경우엔
+    // 실제로 담당하는 것은 딱 하나 — embedWorkerExecutor의 큐가 submit-timeout
+    // (60초) 동안 기다려도 계속 가득 차 있어 RejectedExecutionException이
+    // 던져지는 경우(워커가 사실상 멈춘 상황)뿐이다. 그 경우엔
     // 기존과 동일하게 재시도 토픽으로 넘어가 지수 백오프 후 재시도되고,
     // 그래도 계속 차 있으면 DLT로 간다.
     @RetryableTopic(
@@ -57,10 +58,16 @@ public class EmbedConsumer {
             backoff = @Backoff(delay = 1000, multiplier = 2.0),
             topicSuffixingStrategy = TopicSuffixingStrategy.SUFFIX_WITH_INDEX_VALUE
     )
+    // 왜 max.poll.records=10인가: 큐가 가득 차면 consume()이 최대
+    // submit-timeout-ms(60초)까지 블로킹된다(EmbedWorkerConfig.BoundedWaitPolicy).
+    // 한 번의 poll로 받은 레코드를 다 처리해야 다음 poll()이 호출되므로, 최악의
+    // poll 간격 = 60초 × 레코드 수. 기본값(500)이면 max.poll.interval.ms(15분)를
+    // 훌쩍 넘어 컨슈머가 그룹에서 쫓겨난다. 10건이면 최악 10분으로 상한 안에 든다.
     @KafkaListener(
             topics = "codescope.embed",
             groupId = "embed-group",
-            concurrency = "3"
+            concurrency = "3",
+            properties = "max.poll.records=10"
     )
     public void consume(EmbedMessage message, Acknowledgment ack) {
         // 왜 여기서 ack하지도, 예외를 삼키지도 않는가: 오프셋 커밋은
@@ -185,9 +192,17 @@ public class EmbedConsumer {
     // 큐 포화(RejectedExecutionException)로 재시도까지 모두 소진된, 실제로는
     // 거의 발생하지 않을 것으로 예상되는 경로. 사람이 추적할 수 있게 기록만
     // 남긴다 — FAILED 확정은 여기서도 동일하게 처리해 일관성을 유지한다.
+    //
+    // 왜 Acknowledgment를 받아 커밋하는가: 컨테이너가 AckMode.MANUAL
+    // (KafkaConsumerConfig)이라 DLT 리스너도 직접 ack해야 오프셋이 커밋된다.
+    // 예전에는 ack가 없어 codescope.embed-dlt 오프셋이 한 번도 커밋되지 않았고,
+    // 앱(및 @SpringBootTest 컨텍스트)이 뜰 때마다 같은 DLT 레코드를 처음부터
+    // 다시 읽어 그 사이 정상 임베딩된 레포까지 FAILED로 되돌렸다(2026-10-13 실측:
+    // committed offset 없음 / log-end 3, 재기동 직후 같은 3건 재처리).
     @DltHandler
     public void handleDlt(EmbedMessage message,
-                          @Header(KafkaHeaders.EXCEPTION_MESSAGE) String errorMessage) {
+                          @Header(KafkaHeaders.EXCEPTION_MESSAGE) String errorMessage,
+                          Acknowledgment ack) {
         log.error("[DLT] 임베딩 작업 큐 제출 최종 실패: fullName={}, reason={}",
                 message.fullName(), errorMessage);
 
@@ -196,5 +211,7 @@ public class EmbedConsumer {
                     repository.markFailed();
                     githubRepositoryJpaRepository.save(repository);
                 });
+
+        ack.acknowledge();
     }
 }

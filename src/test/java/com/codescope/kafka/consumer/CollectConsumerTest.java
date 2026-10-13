@@ -191,6 +191,16 @@ class CollectConsumerTest {
         verify(duplicateCheckService, never()).releaseLock(any());
     }
 
+    @Test
+    @DisplayName("DLT 메시지는 로그만 남기고 오프셋을 커밋한다 — 재기동마다 재처리되지 않도록")
+    void handleDlt_오프셋_커밋() {
+        // when
+        collectConsumer.handleDlt(createMessage(), "GitHub API 실패", ack);
+
+        // then
+        verify(ack).acknowledge();
+    }
+
     private CollectMessage createMessage() {
         return new CollectMessage(
                 "test-repo",

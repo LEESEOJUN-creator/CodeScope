@@ -329,6 +329,11 @@ codescope:
   embed-worker:
     pool-size: 6
     queue-capacity: 20
+    # 큐가 가득 찼을 때 즉시 거절하지 않고 자리가 나길 기다리는 상한
+    # (EmbedWorkerConfig.BoundedWaitPolicy). 이 값 × EmbedConsumer의
+    # max.poll.records(10)가 max.poll.interval.ms(900000)보다 작아야 한다.
+    # 60초: 실측상 30건 버스트의 큐가 다 비는 데 약 37초 → 그보다 여유 있게
+    submit-timeout-ms: 60000
 
 # ──────────────────────────────────────
 # JWT 설정

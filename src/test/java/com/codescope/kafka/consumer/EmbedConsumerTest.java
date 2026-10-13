@@ -163,11 +163,13 @@ class EmbedConsumerTest {
                 .willReturn(Optional.of(repository));
 
         // when
-        embedConsumer.handleDlt(new EmbedMessage(FULL_NAME), "Ollama 연결 실패");
+        embedConsumer.handleDlt(new EmbedMessage(FULL_NAME), "Ollama 연결 실패", ack);
 
         // then
         assertThat(repository.getProcessStatus()).isEqualTo(FAILED);
         verify(githubRepositoryJpaRepository).save(repository);
+        // 커밋하지 않으면 재기동마다 같은 DLT 레코드가 다시 처리된다
+        verify(ack).acknowledge();
     }
 
     private GithubRepository createRepository() {

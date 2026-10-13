@@ -129,13 +129,17 @@ public class CollectConsumer {
         }
     }
 
+    // ack가 필요한 이유는 EmbedConsumer.handleDlt 주석 참고(AckMode.MANUAL이라
+    // 커밋하지 않으면 재기동마다 같은 DLT 레코드가 다시 처리된다).
     @DltHandler
     public void handleDlt(CollectMessage message,
-                          @Header(KafkaHeaders.EXCEPTION_MESSAGE) String errorMessage) {
+                          @Header(KafkaHeaders.EXCEPTION_MESSAGE) String errorMessage,
+                          Acknowledgment ack) {
         // 재시도까지 소진된 메시지를 사람이 추적할 수 있게 남긴다.
         // (이전에는 조용히 버려져 무엇이 왜 실패했는지 알 방법이 없었다)
         log.error("[DLT] 레포 수집 최종 실패: fullName={}, reason={}",
                 message.fullName(), errorMessage);
+        ack.acknowledge();
     }
 
     private GithubRepository toEntity(CollectMessage message) {
