@@ -17,10 +17,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * increaseScore로 누적된 점수가 getTopRepos에서 내림차순으로 정확히
  * 정렬되는지, 점수 역전이 실제로 순위 역전으로 이어지는지 확인한다
  */
-@SpringBootTest
+// 실제 랭킹 키(trending:repos)는 수집 파이프라인이 실데이터로 채우므로, 테스트 전용 키를 쓴다
+@SpringBootTest(properties = "codescope.trending.redis-key=" + TrendServiceTest.TRENDING_REPOS_KEY)
 class TrendServiceTest {
 
-    private static final String TRENDING_REPOS_KEY = "trending:repos";
+    static final String TRENDING_REPOS_KEY = "test:trending:repos";
 
     private static final Long REPO_1 = 9001L;
     private static final Long REPO_2 = 9002L;
