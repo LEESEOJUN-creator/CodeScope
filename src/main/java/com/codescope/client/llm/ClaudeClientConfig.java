@@ -24,6 +24,7 @@ public class ClaudeClientConfig {
     @Bean
     public AnthropicClient anthropicClient(
             @Value("${llm.claude.api-key:}") String apiKey,
+            @Value("${llm.claude.base-url}") String baseUrl,
             @Value("${llm.claude.timeout-ms}") long timeoutMs,
             @Value("${llm.claude.max-retries}") int maxRetries
     ) {
@@ -37,7 +38,11 @@ public class ClaudeClientConfig {
         //   같은 오류는 재시도하지 않으므로, 직접 재시도 루프를 짤 이유가 없다.
         // timeout은 "재시도 1회당" 상한이라, 최악의 벽시계 시간은
         //   timeout × (maxRetries + 1)이다(application.yaml 주석 참고).
+        // baseUrl: 기본은 Anthropic 직접 호출. Messages API 호환 게이트웨이를
+        //   거칠 때만 바꾼다(SDK가 뒤에 /v1/messages를 붙이므로 그 앞까지만 지정).
+        log.info("Claude API base-url={}", baseUrl);
         return AnthropicOkHttpClient.builder()
+                .baseUrl(baseUrl)
                 .apiKey(apiKey.isBlank() ? "missing-api-key" : apiKey)
                 .timeout(Duration.ofMillis(timeoutMs))
                 .maxRetries(maxRetries)

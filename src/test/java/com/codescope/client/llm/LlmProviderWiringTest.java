@@ -34,6 +34,7 @@ class LlmProviderWiringTest {
             .withPropertyValues(
                     "codescope.claude-semaphore.permits=4",
                     "codescope.ollama-semaphore.permits=4",
+                    "llm.claude.base-url=https://api.anthropic.com",
                     "llm.claude.model=claude-opus-5-5",
                     "llm.claude.effort=low",
                     "llm.claude.max-tokens=4096",

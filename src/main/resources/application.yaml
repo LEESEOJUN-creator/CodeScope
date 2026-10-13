@@ -231,6 +231,10 @@ llm:
   claude:
     # 실제 키는 환경변수로만 주입(.env / K8s Secret) — yml·Git에 절대 기록 금지
     api-key: ${ANTHROPIC_API_KEY:}
+    # Anthropic 직접 호출이 기본. Messages API 호환 게이트웨이(프록시)용 키를
+    # 쓸 때만 ANTHROPIC_BASE_URL로 덮어쓴다 — SDK가 /v1/messages를 붙이므로
+    # 그 앞까지만 지정. 게이트웨이를 거치면 프롬프트가 그 사업자를 경유한다.
+    base-url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}
     model: ${CLAUDE_MODEL:claude-opus-5-5}
     # 추천/트렌드 분석은 짧은 요약이라 low로 충분하다(ClaudeLlmClient 주석 참고)
     effort: ${CLAUDE_EFFORT:low}
