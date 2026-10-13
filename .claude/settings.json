@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-sensitive.py\""
+            "command": "if command -v python3 >/dev/null 2>&1; then python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-sensitive.py\"; else python \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-sensitive.py\"; fi"
           }
         ]
       }
