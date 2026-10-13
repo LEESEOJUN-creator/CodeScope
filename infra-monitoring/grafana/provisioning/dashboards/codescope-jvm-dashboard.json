@@ -902,6 +902,123 @@
           "legendFormat": "{{type}}"
         }
       ]
+    },
+    {
+      "type": "row",
+      "title": "LLM 입장 제어 — 과부하 시 503 거절(load shedding)",
+      "id": 20,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM 요청 거절 (503/s)",
+      "id": 21,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "세마포어 대기 상한(acquire-timeout-ms)을 넘겨 503으로 돌려보낸 요청. 0이 아니면 LLM 처리 용량보다 유입이 많다는 뜻 — permits/rate limit 조정 근거",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 45
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "sum by (name) (rate(codescope_llm_shed_total[30s]))",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM 경로 응답 코드별 (req/s)",
+      "id": 22,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-codescope"
+      },
+      "description": "추천/트렌드 분석의 200 대 503 비율. 503이 늘어도 200 처리량이 유지되면 shedding이 정상 동작",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 45
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-codescope"
+          },
+          "refId": "A",
+          "expr": "sum by (uri, status) (rate(http_server_requests_seconds_count{uri=~\"/api/recommend|/api/trends/analysis\"}[30s]))",
+          "legendFormat": "{{uri}} {{status}}"
+        }
+      ]
     }
   ],
   "templating": {

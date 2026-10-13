@@ -40,11 +40,32 @@ k6 `scenarios.js`, mixed, RATE=20, 1분, stub 지연은 생성 2초, 임베딩 2
 | 커넥션 타임아웃 | 372 | **0** |
 | 처리 요청 수 (1분) | 958 | 1,554 |
 
-### 남은 과제
-- recommend와 trend의 p95가 여전히 수십 초다. 원인은 claudeSemaphore 대기열(최대 171)이다.
-  - permits가 4이고 stub 지연이 2초라서, LLM 경로가 처리할 수 있는 상한은 약 초당 2건이다. 반면 유입은 추천만 해도 초당 5건이라 대기열이 끝없이 쌓인다.
-  - 이제 이 포화는 LLM 경로 안에만 갇혀 있고 다른 API에는 번지지 않는다. 그 자체로 설계가 의도한 동작이다.
-  - 다음 단계 후보는 load shedding이다. 세마포어 대기에 상한을 두고, 넘으면 503과 Retry-After를 돌려준다. permits는 실제 API의 rate limit에 맞춰 조정한다.
+### 남은 과제 → 1-1에서 해결
+수정 후에도 recommend와 trend의 p95는 각각 57초, 47.5초였다. 원인은 claudeSemaphore 대기열(최대 171)이다. permits가 4이고 stub 지연이 2초라서 LLM 경로의 처리 상한은 약 초당 2건인데, 유입은 그보다 많아 대기열이 끝없이 쌓였다. 다만 이 포화는 LLM 경로 안에만 갇혀 있었다.
+
+## 1-1. LLM 대기열 무한 증가 → 대기 상한 + 503 (load shedding)
+
+### 수정
+- **`LlmAdmissionControl`:** 세마포어를 `acquire()`(무한 대기) 대신 `tryAcquire(acquire-timeout-ms = 5s)`로 얻는다. 상한을 넘기면 `LlmOverloadedException`을 던진다.
+- **응답 변환:** `GlobalExceptionHandler`가 이 예외를 **503 + Retry-After: 5**로 바꾼다. 서버 고장(500)이 아니라 "잠시 후 다시"라는 표준 신호다.
+- **적용 범위:** ClaudeLlmClient와 StubLlmClient가 같은 입장 제어를 거친다. 거절 횟수는 `codescope_llm_shed_total` 지표로 남기고, Grafana에 거절 패널을 추가했다.
+- **k6:** LLM 경로의 503은 의도된 거절이므로 `http_req_failed`에서 빼고, `llm_shed_rate`로 따로 집계한다.
+
+### 결과 (같은 시나리오, 같은 조건)
+
+| 지표 | 1 수정 전 | 1 수정 후 | 1-1 수정 후 |
+|---|---|---|---|
+| browse p95 | 30.0s | 9.41ms | 8.72ms |
+| recommend p95 | 35.5s | 57.3s | **7.1s** |
+| trend p95 | 30.0s | 47.5s | **6.76s** |
+| 실패율 (서버 오류) | 12.9% | 0% | 0% |
+| LLM 거절(503) 비율 | - | - | 41.7% |
+| claudeSemaphore 대기 (최대) | - | 171 | 43 |
+| dropped_iterations | 834 | 131 | **3** |
+| 처리 요청 수 (1분) | 958 | 1,554 | 1,800 |
+
+거절 비율 41.7%는 처리 상한(약 초당 2건)보다 유입이 많다는 사실을 그대로 드러낸 숫자다. 이제 사용자는 1분씩 기다리는 대신 최대 약 7초 안에 결과를 받거나, "5초 후 재시도" 안내를 받는다.
+실제 운영에서는 permits를 Claude API의 rate limit에 맞춰 키워 처리 상한 자체를 올린다. 이 비율은 그 조정의 근거로 쓴다.
 
 ## 2. 임베딩 큐 버스트 → 영구 FAILED
 

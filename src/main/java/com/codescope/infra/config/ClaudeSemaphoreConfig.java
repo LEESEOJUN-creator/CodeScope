@@ -1,5 +1,7 @@
 package com.codescope.infra.config;
 
+import com.codescope.client.llm.LlmAdmissionControl;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -42,5 +44,21 @@ public class ClaudeSemaphoreConfig {
         // fair 모드(true): DB/Ollama 세마포어와 동일한 이유로, 처리량보다
         // 대기 시간의 예측 가능성을 우선한다.
         return new Semaphore(permits, true);
+    }
+
+    // claudeSemaphore에 대기 상한(load shedding)을 씌운 입장 제어.
+    // ClaudeLlmClient/StubLlmClient는 세마포어를 직접 쓰지 않고 이 Bean을 거친다
+    // (LlmAdmissionControl 주석 참고). 거절 횟수는 codescope_llm_shed_total로 노출.
+    @Bean
+    public LlmAdmissionControl claudeAdmission(
+            Semaphore claudeSemaphore,
+            MeterRegistry meterRegistry,
+            @Value("${codescope.claude-semaphore.acquire-timeout-ms}") long acquireTimeoutMs,
+            @Value("${codescope.claude-semaphore.retry-after-seconds}") long retryAfterSeconds
+    ) {
+        log.info("Claude 입장 제어 초기화: acquireTimeoutMs={}, retryAfterSeconds={}",
+                acquireTimeoutMs, retryAfterSeconds);
+        return new LlmAdmissionControl(claudeSemaphore, acquireTimeoutMs, retryAfterSeconds,
+                meterRegistry.counter("codescope.llm.shed", "name", "claudeSemaphore"));
     }
 }

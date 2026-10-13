@@ -319,6 +319,10 @@ codescope:
   # 실측(codescope_semaphore_queued 지표)으로 조정한다
   claude-semaphore:
     permits: 4
+    # 대기 상한(load shedding, LlmAdmissionControl). 넘기면 503 + Retry-After.
+    # 5초: 추천 목표 p95 8초(k6 threshold) = 대기 5초 + 생성 2~3초
+    acquire-timeout-ms: 5000
+    retry-after-seconds: 5
   # EmbedConsumer가 poll 스레드에서 실제 임베딩 작업을 분리해 위임하는
   # 전용 워커 풀(EmbedWorkerConfig 참고).
   # pool-size=6: Ollama 세마포어(permits=4)보다 약간 크게 둬, 세마포어

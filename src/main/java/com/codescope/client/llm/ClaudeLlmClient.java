@@ -8,12 +8,10 @@ import com.anthropic.models.beta.messages.BetaStopReason;
 import com.anthropic.models.beta.messages.MessageCreateParams;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
-import java.util.concurrent.Semaphore;
 import java.util.stream.Collectors;
 
 /**
@@ -40,7 +38,7 @@ public class ClaudeLlmClient implements LlmClient {
     private static final String REFUSAL_FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
     private final AnthropicClient anthropicClient;
-    private final Semaphore claudeSemaphore;
+    private final LlmAdmissionControl claudeAdmission;
     private final MeterRegistry meterRegistry;
     private final boolean apiKeyConfigured;
     private final String model;
@@ -50,7 +48,7 @@ public class ClaudeLlmClient implements LlmClient {
 
     public ClaudeLlmClient(
             AnthropicClient anthropicClient,
-            @Qualifier("claudeSemaphore") Semaphore claudeSemaphore,
+            LlmAdmissionControl claudeAdmission,
             MeterRegistry meterRegistry,
             @Value("${llm.claude.api-key:}") String apiKey,
             @Value("${llm.claude.model}") String model,
@@ -59,7 +57,7 @@ public class ClaudeLlmClient implements LlmClient {
             @Value("${llm.claude.refusal-fallback}") boolean refusalFallback
     ) {
         this.anthropicClient = anthropicClient;
-        this.claudeSemaphore = claudeSemaphore;
+        this.claudeAdmission = claudeAdmission;
         this.meterRegistry = meterRegistry;
         this.apiKeyConfigured = !apiKey.isBlank();
         this.model = model;
@@ -75,22 +73,16 @@ public class ClaudeLlmClient implements LlmClient {
                     "ANTHROPIC_API_KEY가 설정되지 않아 Claude 생성 호출을 할 수 없습니다.");
         }
 
-        // 왜 acquire()가 try 블록 바깥인가: OllamaLlmClient와 동일한 이유 —
-        // try 안에서 acquire하면 acquire 자체의 실패(InterruptedException)에도
-        // finally의 release()가 실행되어 permits 카운트가 실제 획득 없이 늘어난다.
-        try {
-            claudeSemaphore.acquire();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Claude 세마포어 획득 중 인터럽트됨", e);
-        }
-
+        // 대기 상한을 넘기면 LlmOverloadedException(→ 503)으로 즉시 거절된다.
+        // acquire()가 try 블록 바깥인 이유: 획득에 실패했는데 finally의 release()가
+        // 실행되면 permits가 실제 획득 없이 늘어난다(OllamaLlmClient와 동일).
+        claudeAdmission.acquire();
         try {
             BetaMessage response = anthropicClient.beta().messages().create(buildParams(prompt));
             recordUsage(response);
             return extractText(response);
         } finally {
-            claudeSemaphore.release();
+            claudeAdmission.release();
         }
     }
 

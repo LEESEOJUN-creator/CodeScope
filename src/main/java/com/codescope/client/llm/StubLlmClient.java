@@ -1,12 +1,9 @@
 package com.codescope.client.llm;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
-
-import java.util.concurrent.Semaphore;
 
 /**
  * 부하테스트 전용 LlmClient. 실제 API를 부르지 않고 고정 지연 후 고정
@@ -18,9 +15,9 @@ import java.util.concurrent.Semaphore;
  *   어떻게 버티는가"다. 그 관찰에 필요한 건 응답 내용이 아니라 지연 모양이라,
  *   지연만 재현하면 충분하다.
  *
- * 왜 실제 Claude와 같은 claudeSemaphore를 거치는가: 세마포어 대기열이
- *   차오르는 모습(배압)까지 실제와 동일하게 재현해야 실험 결과를 실제 경로에
- *   대입할 수 있다.
+ * 왜 실제 Claude와 같은 claudeAdmission(세마포어 + 대기 상한)을 거치는가:
+ *   대기열이 차오르고 상한을 넘으면 503으로 거절되는 모습(배압)까지 실제와
+ *   동일하게 재현해야 실험 결과를 실제 경로에 대입할 수 있다.
  *
  * 왜 Thread.sleep인가: 가상 스레드에서 sleep은 캐리어 스레드를 반납하고
  *   언마운트된다 — 네트워크 I/O 대기와 같은 동작이라 실제 API 호출의 대기를
@@ -31,27 +28,21 @@ import java.util.concurrent.Semaphore;
 @ConditionalOnProperty(name = "llm.generation.provider", havingValue = "stub")
 public class StubLlmClient implements LlmClient {
 
-    private final Semaphore claudeSemaphore;
+    private final LlmAdmissionControl claudeAdmission;
     private final long latencyMs;
 
     public StubLlmClient(
-            @Qualifier("claudeSemaphore") Semaphore claudeSemaphore,
+            LlmAdmissionControl claudeAdmission,
             @Value("${llm.stub.generation-latency-ms}") long latencyMs
     ) {
-        this.claudeSemaphore = claudeSemaphore;
+        this.claudeAdmission = claudeAdmission;
         this.latencyMs = latencyMs;
         log.warn("StubLlmClient 활성화 — 실제 LLM을 호출하지 않습니다(부하테스트 전용). latencyMs={}", latencyMs);
     }
 
     @Override
     public String generate(String prompt) {
-        try {
-            claudeSemaphore.acquire();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Claude 세마포어 획득 중 인터럽트됨", e);
-        }
-
+        claudeAdmission.acquire();
         try {
             Thread.sleep(latencyMs);
             return "[stub] 부하테스트용 고정 응답입니다. promptLength=" + prompt.length();
@@ -59,7 +50,7 @@ public class StubLlmClient implements LlmClient {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("stub 생성 대기 중 인터럽트됨", e);
         } finally {
-            claudeSemaphore.release();
+            claudeAdmission.release();
         }
     }
 }

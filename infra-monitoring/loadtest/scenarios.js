@@ -1,5 +1,6 @@
 import http from 'k6/http';
 import { check } from 'k6';
+import { Rate } from 'k6/metrics';
 
 // CodeScope 다중 경로 부하테스트 — GC/JFR/배압 관찰용.
 // repo-detail.js(단일 엔드포인트 회귀 감지)와 달리, 실제 사용 경로를 성격별로
@@ -37,6 +38,12 @@ const DURATION = __ENV.DURATION || '2m';
 const SELECTED = __ENV.SCENARIO || 'mixed';
 
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+// LLM 경로는 과부하 시 503 + Retry-After로 빠르게 거절한다(load shedding,
+// LlmAdmissionControl). 이건 서버 오류가 아니라 의도된 배압 응답이라
+// http_req_failed에 넣지 않고, 거절 비율을 llm_shed_rate로 따로 본다.
+const LLM_EXPECTED = http.expectedStatuses(200, 503);
+const llmShedRate = new Rate('llm_shed_rate');
 
 // preAllocatedVUs/maxVUs: 응답이 느려져도 목표 RATE를 유지하려면 동시
 // 진행 중인 요청 수만큼 VU가 필요하다(필요 VU ≈ RATE × 평균 응답시간(초)).
@@ -78,13 +85,14 @@ function buildScenarios() {
 
 export const options = {
   scenarios: buildScenarios(),
-  // 경로별로 기대 지연이 달라 임계치를 따로 둔다. stub 지연(2초) + 세마포어
-  // 대기가 있는 recommend는 넉넉하게, browse는 repo-detail.js와 같은 500ms.
+  // 경로별로 기대 지연이 달라 임계치를 따로 둔다. browse는 repo-detail.js와
+  // 같은 500ms. LLM 경로는 "대기 상한 5초 + 생성 2~3초"라 8초 — 대기 상한
+  // 덕분에 과부하에서도 이 선을 넘지 않아야 한다(넘으면 shedding이 안 도는 것).
   thresholds: {
     'http_req_failed': ['rate<0.01'],
     'http_req_duration{path:browse}': ['p(95)<500'],
     'http_req_duration{path:recommend}': ['p(95)<8000'],
-    'http_req_duration{path:trend}': ['p(95)<5000'],
+    'http_req_duration{path:trend}': ['p(95)<8000'],
     // arrival-rate가 VU 부족으로 목표를 못 채우면 dropped_iterations가 쌓인다 —
     // 서버가 감당 못 해 응답이 밀리고 있다는 직접적인 신호.
     'dropped_iterations': ['count<1'],
@@ -104,16 +112,24 @@ export function browse() {
   }
 }
 
+// 200(정상) 또는 503(의도된 거절)만 정상으로 보고, 거절 비율을 기록한다.
+const llmOk = (res) => {
+  llmShedRate.add(res.status === 503);
+  return check(res, { 'status is 200 or 503(shed)': (r) => r.status === 200 || r.status === 503 });
+};
+
 export function recommend() {
-  ok(http.get(`${BASE_URL}/api/recommend?stack=${encodeURIComponent(pick(STACKS))}`, {
+  llmOk(http.get(`${BASE_URL}/api/recommend?stack=${encodeURIComponent(pick(STACKS))}`, {
     tags: { name: 'recommend' },
     timeout: '60s',
+    responseCallback: LLM_EXPECTED,
   }));
 }
 
 export function trend() {
-  ok(http.get(`${BASE_URL}/api/trends/analysis?repoId=${pick(REPO_IDS)}`, {
+  llmOk(http.get(`${BASE_URL}/api/trends/analysis?repoId=${pick(REPO_IDS)}`, {
     tags: { name: 'trend-analysis' },
     timeout: '60s',
+    responseCallback: LLM_EXPECTED,
   }));
 }

@@ -33,6 +33,8 @@ class LlmProviderWiringTest {
             .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
             .withPropertyValues(
                     "codescope.claude-semaphore.permits=4",
+                    "codescope.claude-semaphore.acquire-timeout-ms=5000",
+                    "codescope.claude-semaphore.retry-after-seconds=5",
                     "codescope.ollama-semaphore.permits=4",
                     "llm.claude.base-url=https://api.anthropic.com",
                     "llm.claude.model=claude-opus-5-5",

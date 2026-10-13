@@ -117,7 +117,7 @@ class ClaudeLlmClientTest {
     void generate_withoutApiKey_failsFast() {
         Semaphore semaphore = new Semaphore(1);
         ClaudeLlmClient client = new ClaudeLlmClient(
-                anthropicClient(), semaphore, new SimpleMeterRegistry(),
+                anthropicClient(), admission(semaphore), new SimpleMeterRegistry(),
                 "", "claude-opus-5-5", 4096, "low", true);
 
         assertThatThrownBy(() -> client.generate("프롬프트"))
@@ -133,7 +133,7 @@ class ClaudeLlmClientTest {
         nextResponse = messageJson("refusal", "");
         Semaphore semaphore = new Semaphore(2);
         ClaudeLlmClient client = new ClaudeLlmClient(
-                anthropicClient(), semaphore, new SimpleMeterRegistry(),
+                anthropicClient(), admission(semaphore), new SimpleMeterRegistry(),
                 "test-key", "claude-opus-5-5", 4096, "low", true);
 
         assertThatThrownBy(() -> client.generate("프롬프트")).isInstanceOf(IllegalStateException.class);
@@ -142,8 +142,12 @@ class ClaudeLlmClientTest {
 
     private ClaudeLlmClient newClient(SimpleMeterRegistry registry, String apiKey, boolean refusalFallback) {
         return new ClaudeLlmClient(
-                anthropicClient(), new Semaphore(4), registry,
+                anthropicClient(), admission(new Semaphore(4)), registry,
                 apiKey, "claude-opus-5-5", 4096, "low", refusalFallback);
+    }
+
+    private static LlmAdmissionControl admission(Semaphore semaphore) {
+        return new LlmAdmissionControl(semaphore, 1_000, 5, new SimpleMeterRegistry().counter("shed"));
     }
 
     private AnthropicClient anthropicClient() {

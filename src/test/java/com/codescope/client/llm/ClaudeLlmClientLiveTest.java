@@ -43,7 +43,7 @@ class ClaudeLlmClientLiveTest {
                         .timeout(Duration.ofSeconds(60))
                         .maxRetries(2)
                         .build(),
-                new Semaphore(1), registry,
+                new LlmAdmissionControl(new Semaphore(1), 60_000, 5, registry.counter("shed")), registry,
                 apiKey, model, 1024, "low", true);
 
         String result = client.generate("한 문장으로만 답하세요: Spring Boot는 무엇인가요?");
