@@ -3,6 +3,7 @@ package com.codescope.kafka.consumer;
 import com.codescope.domain.repo.entity.GithubRepository;
 import com.codescope.domain.repo.repository.GithubRepositoryJpaRepository;
 import com.codescope.domain.repo.service.DuplicateCheckService;
+import com.codescope.domain.repo.service.TrendService;
 import com.codescope.kafka.dto.CollectMessage;
 import com.codescope.kafka.producer.EmbedProducer;
 import org.junit.jupiter.api.DisplayName;
@@ -19,6 +20,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
@@ -44,6 +46,9 @@ class CollectConsumerTest {
 
     @Mock
     private Acknowledgment ack;
+
+    @Mock
+    private TrendService trendService;
 
     @InjectMocks
     private CollectConsumer collectConsumer;
@@ -95,6 +100,7 @@ class CollectConsumerTest {
 
         // then
         verify(githubRepositoryJpaRepository).save(any(GithubRepository.class));
+        verify(trendService).updateScore(any(), eq(100.0));
         verify(embedProducer).publish(FULL_NAME);
         verify(duplicateCheckService).markCompleted(FULL_NAME);
         verify(ack).acknowledge();
@@ -123,6 +129,8 @@ class CollectConsumerTest {
         assertThat(existing.getForkCount()).isEqualTo(77);
         assertThat(existing.getOpenIssueCount()).isEqualTo(33);
         verify(githubRepositoryJpaRepository).save(existing);
+        // 랭킹 점수는 누적이 아니라 최신 스타 수로 덮어쓴다
+        verify(trendService).updateScore(existing.getId(), 999.0);
         verify(embedProducer).publish(FULL_NAME);
         verify(duplicateCheckService).markCompleted(FULL_NAME);
         verify(ack).acknowledge();

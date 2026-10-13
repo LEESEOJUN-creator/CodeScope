@@ -3,6 +3,7 @@ package com.codescope.kafka.consumer;
 import com.codescope.domain.repo.entity.GithubRepository;
 import com.codescope.domain.repo.repository.GithubRepositoryJpaRepository;
 import com.codescope.domain.repo.service.DuplicateCheckService;
+import com.codescope.domain.repo.service.TrendService;
 import com.codescope.kafka.dto.CollectMessage;
 import com.codescope.kafka.producer.EmbedProducer;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,7 @@ public class CollectConsumer {
     private final DuplicateCheckService duplicateCheckService;
     private final GithubRepositoryJpaRepository githubRepositoryJpaRepository;
     private final EmbedProducer embedProducer;
+    private final TrendService trendService;
 
     // 재시도/DLT를 @RetryableTopic에 위임한다.
     // 왜: 기존에는 예외를 던지면 "Kafka가 재전달해준다"고 봤지만, 실제로는
@@ -95,9 +97,16 @@ public class CollectConsumer {
                 githubRepositoryJpaRepository.save(existing.get());
                 log.info("레포 갱신 완료: fullName={}, stars={}", fullName, message.starCount());
             } else {
-                githubRepositoryJpaRepository.save(toEntity(message));
+                // 신규 엔티티는 save()가 같은 인스턴스를 persist하므로(IDENTITY 전략)
+                // 저장 직후 이 인스턴스에 id가 채워진다 — 아래 랭킹 반영에 쓴다.
+                existing = Optional.of(toEntity(message));
+                githubRepositoryJpaRepository.save(existing.get());
                 log.info("레포 신규 저장 완료: fullName={}", fullName);
             }
+
+            // 트렌드 랭킹(Redis Sorted Set)에 스타 수 반영 — 멱등 덮어쓰기
+            // (TrendService.updateScore 참고. 이 호출이 없어 랭킹이 항상 비어 있었다)
+            trendService.updateScore(existing.get().getId(), message.starCount());
 
             // 5. 성공 경로: 임베딩 이벤트 발행 → 완료 표식 → 커밋
             embedProducer.publish(fullName);

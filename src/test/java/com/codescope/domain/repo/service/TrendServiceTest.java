@@ -70,4 +70,16 @@ class TrendServiceTest {
         // then
         assertThat(trendService.getTopRepos(3)).containsExactly(REPO_2, REPO_3, REPO_1);
     }
+
+    @Test
+    @DisplayName("updateScore는 누적이 아니라 덮어쓰기라 같은 값을 여러 번 반영해도 순위·점수가 변하지 않는다(멱등)")
+    void updateScore_멱등_덮어쓰기() {
+        trendService.updateScore(REPO_1, 100);
+        trendService.updateScore(REPO_2, 250);
+        // Kafka 재전달로 같은 수집 메시지가 다시 처리된 상황
+        trendService.updateScore(REPO_1, 100);
+        trendService.updateScore(REPO_1, 100);
+
+        assertThat(trendService.getTopRepos(2)).containsExactly(REPO_2, REPO_1);
+    }
 }
