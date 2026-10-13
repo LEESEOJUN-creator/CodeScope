@@ -10,10 +10,11 @@ type StackInputProps = {
   onRemove: (value: string) => void;
   placeholder?: string;
   disabled?: boolean;
+  onDraftChange?: (draft: string) => void;
 };
 
 // 기술 스택 칩 입력. Enter 또는 쉼표로 추가, 칩의 ×로 삭제, 빈 입력에서 Backspace로 마지막 삭제.
-export function StackInput({ values, onAdd, onRemove, placeholder, disabled }: StackInputProps) {
+export function StackInput({ values, onAdd, onRemove, placeholder, disabled, onDraftChange }: StackInputProps) {
   const [draft, setDraft] = useState('');
   const suggestionsId = useId();
   const { data: keywords } = useApiData<Keyword[]>('/api/keywords');
@@ -22,6 +23,7 @@ export function StackInput({ values, onAdd, onRemove, placeholder, disabled }: S
     const value = draft.trim().replace(/,$/, '').trim();
     if (value) onAdd(value);
     setDraft('');
+    onDraftChange?.('');
   };
 
   return (
@@ -47,14 +49,17 @@ export function StackInput({ values, onAdd, onRemove, placeholder, disabled }: S
         disabled={disabled}
         placeholder={values.length === 0 ? placeholder : '스택 추가'}
         aria-label="기술 스택 입력"
+        maxLength={300}
         onChange={(e) => {
           const next = e.target.value;
           if (next.endsWith(',')) {
             const value = next.slice(0, -1).trim();
             if (value) onAdd(value);
             setDraft('');
+            onDraftChange?.('');
           } else {
             setDraft(next);
+            onDraftChange?.(next);
           }
         }}
         onKeyDown={(e) => {

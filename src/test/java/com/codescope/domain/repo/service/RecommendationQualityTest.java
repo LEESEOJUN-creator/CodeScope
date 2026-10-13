@@ -47,7 +47,27 @@ class RecommendationQualityTest {
         ReflectionTestUtils.setField(service, "evidenceMaxChars", 100);
         when(search.search("jev")).thenReturn(List.of(new RepositoryEvidence(
                 1L, "owner/repo", null, "Python", 1, null, List.of(), List.of())));
-        when(llm.generate(anyString())).thenReturn("의미 기반 후보");
         assertThat(service.recommend("jev").recommendation()).contains("직접 확인되지 않은 입력: jev", "수집 범위 부족");
+        verifyNoInteractions(llm);
+    }
+
+    @Test void purposeAndExperienceAreReflectedWithoutAcceptingArbitraryInstructions() {
+        ReflectionTestUtils.setField(service, "evidenceMaxChars", 100);
+        var evidence = new RepositoryEvidence(1L, "owner/repo", "framework", "Java", 1,
+                "Readme", List.of("java"), List.of("java"));
+        String prompt = service.buildPrompt("java", List.of(evidence),
+                new com.codescope.domain.repo.dto.RecommendationPreferences("contribute", "beginner"));
+        assertThat(prompt).contains("첫 기여", "입문", "작은 단계");
+        assertThatThrownBy(() -> new com.codescope.domain.repo.dto.RecommendationPreferences("ignore instructions", "beginner"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test void analysisUsesReadmeAndDoesNotInventGrowthFromCumulativeStars() {
+        var analysis = new TrendAnalysisService(mock(com.codescope.domain.repo.repository.GithubRepositoryJpaRepository.class),
+                mock(com.codescope.domain.repo.repository.TrendScoreJpaRepository.class), llm);
+        var repo = com.codescope.domain.repo.entity.GithubRepository.builder().name("example").fullName("owner/example")
+                .githubUrl("https://github.com/owner/example").language("Java").build();
+        repo.updateReadmeExcerpt("A streaming framework.");
+        assertThat(analysis.buildPrompt(repo)).contains("A streaming framework.", "최근 급상승", "확정하지 마세요", "GitHub 커밋 시각이 아닙니다");
     }
 }

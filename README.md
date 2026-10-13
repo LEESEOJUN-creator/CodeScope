@@ -31,8 +31,8 @@ flowchart LR
 |---|---|---|
 | 레포 탐색 | `/explore` | 키워드(이름·설명)·언어·최소 스타 필터, 페이지네이션 (QueryDSL 동적 쿼리) |
 | 트렌드 랭킹 | `/`, `/trending` | 수집 시 Redis Sorted Set에 스타 수를 멱등(ZADD) 반영해 순위 조회 |
-| AI 트렌드 분석 | `/repos/{id}` | "왜 뜨는가"를 지표만 근거로 Claude가 분석 (Redis 1시간 캐시 + DB 영구 저장) |
-| AI 레포 추천 (RAG) | `/recommend` | 알려진 별칭 정규화 → 언어/topics/이름/설명 일치 + 벡터 검색 → README 근거를 담은 상세 추천 |
+| AI 프로젝트 분석 | `/repos/{id}` | README·수집 지표를 근거로 프로젝트 이해·시작 방법·확인 사항 분석 (Redis 1시간 캐시 + DB 영구 저장) |
+| AI 레포 추천 (RAG) | `/recommend` | 언어/topics/이름/설명 일치 + 벡터 검색 → 목적·경험 수준에 맞춘 README 기반 추천 |
 | 기여 이슈 | `/issues` | 스택 일치 저장소 최대 5개에서 실제 열린·미배정 good first issue 검색, AI가 기여 준비 안내 |
 | 기술 생태계 | `/ecosystem` | 수집 저장소의 언어/topics 동시 등장 수와 관련 저장소 조회 |
 | 관심 스택 | `/me` | 로그인 사용자의 스택 저장 → 입력 없이 "내 스택으로 추천" |
@@ -46,7 +46,10 @@ flowchart LR
 - 홈과 스택 입력의 키워드는 `GET /api/keywords`에서 받는다. GitHub Search API의 `language`와 `topics`를 저장한 뒤 저장소별로 집계하며, 개인 관심 스택에만 있는 토픽은 제외한다. 고정 예시 키워드나 AI가 만들어낸 키워드가 아니다.
 - `github.collection.queries`의 기술별 검색 9개를 10분마다 실행한다. 검색당 10개, 중복 제거 후 저장하므로 검색 결과의 총수와 실제 추가 건수는 다르다. 전체 GitHub를 수집하는 것은 아니다.
 - 추천은 EMBEDDED 상태인 저장소만 사용한다. 언어·토픽·이름·설명의 직접 일치 수를 우선하고 같은 일치 수에서는 벡터 거리가 가까운 후보를 먼저 보여준다. 별칭은 명시된 것만 정규화하며 `jev` 같은 모호한 입력은 추측하지 않는다.
-- README 정리본은 V5 마이그레이션의 `readme_excerpt`에 저장한다. 기본 추천 근거 예산은 후보당 1,600자이고, 5줄 응답 제한은 제거했다. 기존 레포의 근거와 토픽은 다음 수집·임베딩 주기에 채워진다.
+- 추천 목적은 학습(`learn`)·첫 기여(`contribute`)·프로젝트 도입(`adopt`), 경험 수준은 입문(`beginner`)·경험 있음(`intermediate`)·숙련(`advanced`)이다. `GET /api/recommend`의 `goal`·`experience`로 전달하며 기본값은 `learn`·`intermediate`다. 후보 검색은 스택을 기준으로 하고 목적·경험 수준은 AI의 선택 기준과 설명에 반영한다.
+- 직접 일치하는 기술이 하나도 없으면 생성 AI를 호출하지 않고 표기·수집 범위 확인 안내와 의미 기반 검색 후보를 반환한다. 후보 카드에는 일치 기술과 README 근거 수집 여부를 표시한다.
+- 누적 스타만으로 최근 성장세를 주장하지 않으며, 데이터 갱신 시각을 GitHub 커밋 시각으로 해석하지 않는다. 답변은 제목·목록·강조·코드로 구분해 표시한다.
+- 설명용 README는 코드·링크·제목을 보존해 `readme_excerpt`에 최대 12,000자를 저장한다. 검색용 임베딩 문서와 분리했으며, 생성할 때 소개와 설치·사용·특징 섹션을 후보당 기본 1,600자 안에서 발췌한다. 5줄 응답 제한은 제거했다. 기존 레포의 근거와 토픽은 다음 수집·임베딩 주기에 채워진다.
 - 이슈는 조회 시 GitHub에서 가져오며 현재 `issues` 테이블에 보관하지 않는다. API 실패는 빈 결과로 위장하지 않고 오류로 알린다. AI 설명만 실패하면 실제 이슈 목록은 유지한다. 이슈 상태는 착수 전 원문에서 재확인해야 한다.
 - 생태계는 현재 수집 데이터의 동시 등장 집계이며 시간별 성장률 분석은 제공하지 않는다.
 - Claude 호출 로그의 `requestedModel`, `responseModel`, `messageId`, `stopReason`으로 중계 API 응답을 추적한다. 응답 모델명은 중계 서버가 보고한 값이다.
@@ -175,11 +178,14 @@ cp .env.example .env                  # GitHub OAuth·토큰, JWT_SECRET, ANTHRO
 ```bash
 ./scripts/local-up.sh --app   # 이미지 로컬 빌드 → kind load → .env로 Secret 생성 → k8s/overlays/local 적용
                               # 화면 http://localhost:3000 / API http://localhost:8080 (port-forward)
+./scripts/local-up.sh --app --monitoring  # 위 앱 + Grafana·Prometheus·InfluxDB
 ```
 
 - GHCR 이미지는 amd64 전용이라 Apple Silicon에서는 로컬 빌드 이미지(`k8s/overlays/local`)를 쓴다.
 - 재부팅 후에는 옵션 없이 `./scripts/local-up.sh`만 실행하면 배포된 앱의 port-forward가 복구된다. 코드나 `.env`를 바꿨을 때만 `--app`.
 - 클러스터 앱과 `bootRun`을 동시에 띄우지 않는다(같은 Kafka 컨슈머 그룹을 나눠 가짐). 부하테스트 전에는 `local-down.sh`로 앱 Pod를 내린다.
+- 로컬 overlay는 `monitoring` 프로필로 `/actuator/prometheus`를 공개한다. 실제 AI 설정은 유지한다. [앱 JVM 대시보드](http://localhost:3001/d/codescope-jvm)와 [Prometheus Targets](http://localhost:9090/targets)에서 수집 상태를 확인한다. k6/JMeter 대시보드는 별도 테스트 결과가 있어야 표시된다.
+- `tmux`가 설치되어 있으면 앱 port-forward를 전용 세션으로 유지한다. 재배포 때 이전 Pod에 붙어 있던 연결을 다시 연다.
 
 ### 2. 백엔드 / 프론트엔드
 
@@ -196,6 +202,8 @@ API 비용 없이 화면만 확인하려면 `LLM_GENERATION_PROVIDER=stub ./grad
 ./gradlew test                                              # 인프라(Postgres/Redis) 필요, 외부 API 호출 없음
 set -a && source .env && set +a && ./gradlew liveTest      # 실제 Claude API 1회 호출 (1센트 내외)
 ```
+
+2026-10-13 품질 수정 검증: 백엔드 91개 중 90개 통과·외부 연동 1개 건너뜀, 프론트엔드 lint·TypeScript·프로덕션 빌드 통과. 로컬 kind의 저장소 조회를 기존 k6 시나리오(50초, 최대 10 VU)로 측정해 407건 모두 성공, p95 9.46ms를 기록했고 InfluxDB 저장을 확인했다. AI 생성의 처리량이나 지연을 측정한 결과는 아니다. Next.js 16.3.8 반영 후 운영 의존성 audit는 0건이며, 개발 도구의 `braces` 의존 경로에는 high 경고 5건이 남아 있다(호환 패치 미발행).
 
 ### 4. 부하테스트 · GC/JFR
 

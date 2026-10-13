@@ -14,6 +14,8 @@ type RepoCardProps = {
   rank?: number;
   favorited?: boolean;
   onToggleFavorite?: () => void;
+  matchedKeywords?: string[];
+  readmeAvailable?: boolean;
 };
 
 export function LanguageBadge({ language }: { language: string | null }) {
@@ -37,6 +39,8 @@ export function RepoCard({
   rank,
   favorited,
   onToggleFavorite,
+  matchedKeywords,
+  readmeAvailable,
 }: RepoCardProps) {
   const [owner, name] = fullName.split('/');
 
@@ -51,6 +55,10 @@ export function RepoCard({
         {onToggleFavorite && <StarButton favorited={!!favorited} onToggle={onToggleFavorite} size="sm" />}
       </div>
       <p className="card__desc">{description || '설명이 없습니다.'}</p>
+      {matchedKeywords && <div className="evidence-tags">
+        {matchedKeywords.length > 0 ? matchedKeywords.map((keyword) => <span key={keyword}>일치 · {keyword}</span>) : <span>의미 기반 후보</span>}
+        {readmeAvailable && <span>README 근거 있음</span>}
+      </div>}
       <div className="card__meta">
         <LanguageBadge language={language} />
         <span title={`스타 ${starCount.toLocaleString()}개`}>★ {compactNumber(starCount)}</span>

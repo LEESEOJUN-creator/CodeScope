@@ -8,8 +8,14 @@ public record RecommendedRepoDto(
         String fullName,
         String description,
         String language,
-        int starCount
+        int starCount,
+        java.util.List<String> topics,
+        java.util.List<String> matchedKeywords,
+        boolean readmeAvailable
 ) {
+    public RecommendedRepoDto(Long id, String fullName, String description, String language, int starCount) {
+        this(id, fullName, description, language, starCount, java.util.List.of(), java.util.List.of(), false);
+    }
     public static RecommendedRepoDto from(RecommendCandidateView view) {
         return new RecommendedRepoDto(
                 view.getId(),

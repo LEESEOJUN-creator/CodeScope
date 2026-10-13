@@ -46,6 +46,9 @@ export type RecommendedRepo = {
   description: string | null;
   language: string | null;
   starCount: number;
+  topics?: string[];
+  matchedKeywords?: string[];
+  readmeAvailable?: boolean;
 };
 
 // RepoRecommendResponse

@@ -915,6 +915,41 @@ select.text-input {
   color: var(--text);
 }
 
+.prose { max-width: 80ch; overflow-wrap: anywhere; }
+.prose > * + * { margin-top: 14px; }
+.prose h3 { font-size: 19px; line-height: 1.5; padding-top: 22px; margin-top: 24px; border-top: 1px solid var(--border); }
+.prose h3:first-child { margin-top: 0; padding-top: 0; border: 0; }
+.prose ul, .prose ol { padding-left: 22px; white-space: normal; }
+.prose li + li { margin-top: 10px; }
+.prose code { background: var(--surface-raised); padding: 2px 5px; border-radius: 4px; font-size: 0.9em; }
+.prose pre { padding: 16px; overflow-x: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+.prose pre code { padding: 0; background: none; }
+.ai-result { padding: clamp(20px, 4vw, 36px); }
+.ai-result > .link-more { display: inline-flex; margin-top: 24px; }
+.eyebrow { font-size: 12px; color: var(--primary-hover); letter-spacing: 0.06em; margin-bottom: 10px; }
+.recommend-workspace { padding: 24px; margin-top: 24px; }
+.recommend-options { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+.recommend-options label { display: flex; flex-direction: column; gap: 8px; color: var(--text-muted); font-size: 13px; }
+.recommend-options select { width: 100%; background: var(--bg); color-scheme: dark; }
+.input-help { font-size: 12px; color: var(--text-muted); margin-top: 10px; }
+.recommend-preview { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 32px; padding: 0 4px; }
+.recommend-preview > div { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.recommend-preview strong { font-size: 14px; font-weight: 600; }
+.recommend-preview p { color: var(--text-muted); font-size: 13px; }
+.step-number { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--primary-hover); }
+.evidence-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
+.evidence-tags span { font-size: 11px; padding: 3px 7px; background: var(--primary-soft); border-radius: 5px; color: #93b9fb; }
+.hero-actions { display: flex; gap: 10px; margin: 24px 0 0; flex-wrap: wrap; }
+.data-note { font-size: 12px; color: var(--text-muted); margin-top: 14px; }
+.quick-stacks button { cursor: pointer; }
+
+@media (max-width: 560px) {
+  .recommend-options, .recommend-preview { grid-template-columns: 1fr; }
+  .recommend-workspace { padding: 18px; }
+  .recommend-preview { gap: 20px; }
+  .ai-result { padding: 20px; }
+}
+
 /* ── 로그인 화면 ────────────────────────────────── */
 .login-screen {
   min-height: calc(100vh - 160px);

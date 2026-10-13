@@ -29,6 +29,9 @@ function Recommend() {
   const { data: mySkills } = useApiData<Skill[]>(isAuthenticated ? '/api/users/me/skills' : null);
 
   const [stack, setStack] = useState<string[]>(() => parseStack(params.get('stack') ?? ''));
+  const [draft, setDraft] = useState('');
+  const [goal, setGoal] = useState('learn');
+  const [experience, setExperience] = useState('intermediate');
   const [result, setResult] = useState<RepoRecommend | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +46,9 @@ function Recommend() {
     setError(null);
     setRetryAfter(null);
     setResult(null);
-    const path = useMySkills ? '/api/recommend' : `/api/recommend?stack=${encodeURIComponent(query.join(', '))}`;
+    const queryParams = new URLSearchParams({ goal, experience });
+    if (!useMySkills) queryParams.set('stack', query.join(', '));
+    const path = `/api/recommend?${queryParams}`;
     const res = await apiRequest<RepoRecommend>(path);
     setLoading(false);
     if (res.ok) {
@@ -53,7 +58,7 @@ function Recommend() {
     } else {
       setError(res.message);
     }
-  }, []);
+  }, [goal, experience]);
 
   // 홈의 "스택으로 바로 추천받기"처럼 ?stack= 으로 들어오면 바로 한 번 요청한다
   const autoRan = useRef(false);
@@ -68,18 +73,37 @@ function Recommend() {
   return (
     <main>
       <div className="page-header">
-        <h1>AI 추천</h1>
+        <p className="eyebrow">나에게 맞는 다음 프로젝트</p>
+        <h1>스택에서 시작해, 다음 단계까지.</h1>
         <p className="page-subtitle">
           기술명과 프로젝트 내용을 함께 비교해 후보를 찾고, 설명·토픽·README를 근거로
           적합한 이유와 시작 방법을 안내합니다. 입력 제안은 실제 수집된 언어와 토픽입니다.
         </p>
       </div>
 
+      <section className="recommend-workspace card">
+      <div className="recommend-options">
+        <label>무엇을 하고 싶나요?
+          <select className="text-input" value={goal} onChange={(e) => setGoal(e.target.value)} disabled={loading}>
+            <option value="learn">기술 학습 · 실습</option>
+            <option value="contribute">오픈소스 첫 기여</option>
+            <option value="adopt">내 프로젝트에 도입</option>
+          </select>
+        </label>
+        <label>이 기술에 얼마나 익숙한가요?
+          <select className="text-input" value={experience} onChange={(e) => setExperience(e.target.value)} disabled={loading}>
+            <option value="beginner">이제 시작하는 입문자</option>
+            <option value="intermediate">사용해 본 경험이 있어요</option>
+            <option value="advanced">설계와 내부 구조를 탐구해요</option>
+          </select>
+        </label>
+      </div>
       <form
         className="recommend-form"
         onSubmit={(e) => {
           e.preventDefault();
-          if (stack.length > 0) recommend(stack);
+          const query = parseStack([...stack, draft].join(','));
+          if (query.length > 0) recommend(query);
         }}
       >
         <StackInput
@@ -88,11 +112,13 @@ function Recommend() {
           onRemove={(v) => setStack((prev) => prev.filter((s) => s !== v))}
           placeholder="예: Java, Spring Boot, Kafka (Enter로 추가)"
           disabled={loading}
+          onDraftChange={setDraft}
         />
-        <button type="submit" className="button" disabled={loading || stack.length === 0}>
-          추천 받기
+        <button type="submit" className="button" disabled={loading || (stack.length === 0 && !draft.trim())}>
+          {loading ? '추천 만드는 중…' : '맞춤 추천 받기 →'}
         </button>
       </form>
+      <p className="input-help">쉼표로 기술을 구분하세요. Enter로 태그를 추가하거나 바로 추천받을 수 있습니다.</p>
 
       {ready && (
         <div className="my-stack-hint">
@@ -128,6 +154,13 @@ function Recommend() {
           )}
         </div>
       )}
+      </section>
+
+      {!lastQuery && <div className="recommend-preview">
+        <div><span className="step-number">01</span><strong>맞는 이유</strong><p>기술 스택과 프로젝트가 어떻게 연결되는지</p></div>
+        <div><span className="step-number">02</span><strong>시작하는 방법</strong><p>내 경험 수준에 맞는 첫 실습과 준비 단계</p></div>
+        <div><span className="step-number">03</span><strong>확인할 근거</strong><p>실제 저장소·README와 확인이 필요한 한계</p></div>
+      </div>}
 
       {lastQuery && (
         <section className="ai-section">

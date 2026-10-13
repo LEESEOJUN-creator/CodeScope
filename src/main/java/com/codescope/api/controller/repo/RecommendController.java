@@ -26,8 +26,11 @@ public class RecommendController {
     @GetMapping("/api/recommend")
     public ResponseEntity<ApiResponse<RepoRecommendResponse>> recommend(
             @RequestParam(required = false) String stack,
+            @RequestParam(defaultValue = "learn") String goal,
+            @RequestParam(defaultValue = "intermediate") String experience,
             @AuthenticationPrincipal Long userId
     ) {
-        return ResponseEntity.ok(ApiResponse.success(repoRecommendService.recommend(stack, userId)));
+        return ResponseEntity.ok(ApiResponse.success(repoRecommendService.recommend(stack, userId,
+                new com.codescope.domain.repo.dto.RecommendationPreferences(goal, experience))));
     }
 }

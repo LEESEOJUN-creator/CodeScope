@@ -1,19 +1,53 @@
-// LLM 응답 텍스트 표시용. Claude는 강조를 마크다운 **굵게**로 쓰는데, 일반 텍스트로
-// 찍으면 별표가 그대로 보인다. 마크다운 전체를 렌더링하는 라이브러리 대신 이 한 가지
-// 문법만 <strong>으로 바꾼다 — HTML 문자열을 주입(dangerouslySetInnerHTML)하지 않고
-// React 요소로 만들기 때문에 응답에 태그가 섞여 와도 실행되지 않는다(XSS 안전).
-// 줄바꿈은 .prose의 white-space: pre-wrap이 그대로 살린다.
+import { Fragment, type ReactNode } from 'react';
+
+// HTML은 주입하지 않는다. AI 응답의 제목·목록·강조·코드만 React 요소로 표시한다.
+function inline(text: string): ReactNode[] {
+  return text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/g).map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) return <strong key={index}>{part.slice(2, -2)}</strong>;
+    if (part.startsWith('`') && part.endsWith('`')) return <code key={index}>{part.slice(1, -1)}</code>;
+    return <Fragment key={index}>{part}</Fragment>;
+  });
+}
+
 export function RichText({ text }: { text: string }) {
-  const parts = text.split(/(\*\*[^*\n]+\*\*)/g);
-  return (
-    <p className="prose">
-      {parts.map((part, i) =>
-        part.startsWith('**') && part.endsWith('**') && part.length > 4 ? (
-          <strong key={i}>{part.slice(2, -2)}</strong>
-        ) : (
-          part
-        )
-      )}
-    </p>
-  );
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const blocks: ReactNode[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index].trim();
+    const key = index;
+    if (!line) { index++; continue; }
+    if (/^#{1,6}\s/.test(line)) {
+      blocks.push(<h3 key={key}>{inline(line.replace(/^#{1,6}\s+/, ''))}</h3>);
+      index++;
+      continue;
+    }
+    if (/^(`{3}|~{3})/.test(line)) {
+      const fence = line.slice(0, 3);
+      const code: string[] = [];
+      index++;
+      while (index < lines.length && !lines[index].trim().startsWith(fence)) code.push(lines[index++]);
+      index++;
+      blocks.push(<pre key={key}><code>{code.join('\n')}</code></pre>);
+      continue;
+    }
+    const ordered = /^\d+[.)]\s+/.test(line);
+    if (ordered || /^[-*+]\s+/.test(line)) {
+      const items: ReactNode[] = [];
+      const pattern = ordered ? /^\d+[.)]\s+/ : /^[-*+]\s+/;
+      while (index < lines.length && pattern.test(lines[index].trim())) {
+        items.push(<li key={index}>{inline(lines[index].trim().replace(pattern, ''))}</li>);
+        index++;
+      }
+      blocks.push(ordered ? <ol key={key}>{items}</ol> : <ul key={key}>{items}</ul>);
+      continue;
+    }
+    const paragraph: string[] = [];
+    while (index < lines.length && lines[index].trim()
+      && !/^(#{1,6}\s|[-*+]\s|\d+[.)]\s|`{3}|~{3})/.test(lines[index].trim())) {
+      paragraph.push(lines[index++]);
+    }
+    blocks.push(<p key={key}>{inline(paragraph.join('\n'))}</p>);
+  }
+  return <div className="prose">{blocks}</div>;
 }

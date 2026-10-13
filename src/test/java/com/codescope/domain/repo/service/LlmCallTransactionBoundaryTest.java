@@ -105,7 +105,7 @@ class LlmCallTransactionBoundaryTest {
 
     @AfterEach
     void tearDown() {
-        Objects.requireNonNull(cacheManager.getCache("trendAnalysis")).evict(seeded.getId());
+        Objects.requireNonNull(cacheManager.getCache("trendAnalysis")).evict(seeded.getId() + ":v2");
         trendScoreJpaRepository.findByRepositoryId(seeded.getId()).ifPresent(trendScoreJpaRepository::delete);
         repoEmbeddingJpaRepository.findByRepositoryId(seeded.getId()).ifPresent(repoEmbeddingJpaRepository::delete);
         githubRepositoryJpaRepository.deleteById(seeded.getId());
@@ -133,7 +133,7 @@ class LlmCallTransactionBoundaryTest {
 
         // 두 번째 분석(캐시 만료 상황)은 새 행이 아니라 기존 행을 갱신해야 한다
         // — uk_trend_scores_repo_id 위반 없이 upsert가 동작하는지 확인
-        Objects.requireNonNull(cacheManager.getCache("trendAnalysis")).evict(seeded.getId());
+        Objects.requireNonNull(cacheManager.getCache("trendAnalysis")).evict(seeded.getId() + ":v2");
         when(llmClient.generate(anyString())).thenReturn("updated-llm-response");
 
         mockMvc.perform(get("/api/trends/analysis").param("repoId", seeded.getId().toString()))

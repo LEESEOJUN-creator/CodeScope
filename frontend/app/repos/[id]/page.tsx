@@ -110,17 +110,17 @@ function TrendAnalysisSection({ repoId }: { repoId: number }) {
   return (
     <section className="ai-section">
       <div className="section-head">
-        <h2 className="section-title">왜 뜨는가 · AI 분석</h2>
+        <h2 className="section-title">프로젝트 이해 · AI 분석</h2>
         {analysis && (
-          <span className="muted">스타·포크·이슈 지표 기반 · 1시간 캐시</span>
+          <span className="muted">README·수집 지표 기반 · 1시간 캐시</span>
         )}
       </div>
 
       {!requested ? (
         <div className="ai-panel ai-panel--idle">
           <div>
-            <strong>이 레포가 왜 주목받는지 분석해 볼까요?</strong>
-            <p className="muted">수집된 지표만 근거로 Claude가 설명을 번역하고 인기 이유를 정리합니다.</p>
+            <strong>프로젝트의 특징과 시작 방법을 확인해 보세요.</strong>
+            <p className="muted">README와 수집 지표를 근거로 기능·시작 방법·확인할 사항을 정리합니다.</p>
           </div>
           <button type="button" className="button" onClick={analyze}>
             AI 분석 보기
@@ -132,7 +132,7 @@ function TrendAnalysisSection({ repoId }: { repoId: number }) {
           retryAfter={retryAfter}
           error={error}
           onRetry={analyze}
-          loadingLabel="AI가 트렌드를 분석하고 있어요"
+          loadingLabel="AI가 README와 프로젝트 지표를 분석하고 있어요"
         >
           {analysis && (
             <div className="card ai-result">

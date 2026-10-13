@@ -26,7 +26,7 @@ export function AiPanel({ loading, retryAfter, error, onRetry, loadingLabel, chi
         <span className="spinner" aria-hidden />
         <div>
           <strong>{loadingLabel}</strong>
-          <p className="muted">{elapsed}초 경과 · 보통 수 초 안에 끝납니다</p>
+          <p className="muted">{elapsed}초 경과 · {elapsed < 20 ? '저장소 근거를 읽고 답변을 구성하고 있습니다.' : '상세 답변 생성에 시간이 걸리고 있습니다. 잠시만 기다려주세요.'}</p>
         </div>
       </div>
     );

@@ -14,8 +14,8 @@ export default function TrendingPage() {
       <div className="page-header">
         <h1>트렌드 랭킹</h1>
         <p className="page-subtitle">
-          GitHub에서 수집한 트렌딩 레포를 스타 수 기준으로 정렬했습니다(Redis Sorted Set). 레포를 열면
-          &ldquo;왜 뜨는가&rdquo;를 AI가 분석합니다.
+          수집된 프로젝트를 누적 스타 수로 정렬했습니다. 최근 증가율 순위는 아닙니다.
+          프로젝트를 열면 README와 지표에 근거한 설명을 볼 수 있습니다.
         </p>
       </div>
 

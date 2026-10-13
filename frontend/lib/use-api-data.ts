@@ -15,7 +15,7 @@ type UseApiDataResult<T> = {
 // 401 처리(로그인 이동)는 화면마다 다르므로(공개 화면은 이동하면 안 됨) 여기서
 // 하지 않고 status로 넘긴다.
 export function useApiData<T>(path: string | null): UseApiDataResult<T> {
-  const [result, setResult] = useState<ApiResult<T> | null>(null);
+  const [result, setResult] = useState<{ path: string; response: ApiResult<T> } | null>(null);
   const [loading, setLoading] = useState(path !== null);
   const [version, setVersion] = useState(0);
 
@@ -24,29 +24,32 @@ export function useApiData<T>(path: string | null): UseApiDataResult<T> {
       return;
     }
     let cancelled = false;
+    const controller = new AbortController();
 
     // effect 본문에서 동기 setState를 피하려고(React 19 lint) 마이크로태스크로 시작한다
     queueMicrotask(() => {
       if (!cancelled) setLoading(true);
     });
-    apiRequest<T>(path).then((res) => {
+    apiRequest<T>(path, { signal: controller.signal }).then((res) => {
       if (cancelled) return;
-      setResult(res);
+      setResult({ path, response: res });
       setLoading(false);
     });
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [path, version]);
 
   const reload = useCallback(() => setVersion((v) => v + 1), []);
 
+  const current = path !== null && result?.path === path ? result.response : null;
   return {
-    data: result?.ok ? result.data : null,
-    error: result && !result.ok ? result.message : null,
-    status: result?.status ?? null,
-    loading: path !== null && loading,
+    data: current?.ok ? current.data : null,
+    error: current && !current.ok ? current.message : null,
+    status: current?.status ?? null,
+    loading: path !== null && (loading || result?.path !== path),
     reload,
   };
 }
